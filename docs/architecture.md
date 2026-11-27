@@ -123,7 +123,7 @@ for each is offline. See [Runtime modes](#runtime-modes-and-provider-wiring).
     egress-allowlisted HTTP client (`http.py`).
   - `guards/`: Model Armor and SDP clients (`gcp.py`), secret patterns (`patterns.py`), and the output
     redaction filter (`redaction.py`).
-  - `agents/`: in-app agents `triage/` and `research/`, built on the LLM port's tool use.
+  - `agents/`: in-app agents `triage/`, `research/` and `task_chat/`, built on the LLM port's tool use.
   - `jobs/`: batch entry points, each run as `python -m app.jobs.<name>`.
 - **Startup checks.** The lifespan refuses to serve if the DB role bypasses RLS
   (`assert_rls_enforced`), then starts the single per-process `LISTEN` connection (ARCH-31).
@@ -146,7 +146,8 @@ for each is offline. See [Runtime modes](#runtime-modes-and-provider-wiring).
 - Providers: `vertex-claude` (AnthropicVertex), `vertex-maas` (Model Garden serverless open
   model for `digest`, `followup` and `rejection_analysis`, falling back to Claude Sonnet),
   `vertex-gemini` (stub until M3), plus `replay`, `record` and `synthetic` for offline work.
-- Tool use (`tool_turns.py`, `providers/vertex_claude_tools.py`) powers the research and triage agents.
+- Tool use (`tool_turns.py`, `providers/vertex_claude_tools.py`) powers the research, triage and
+  task-chat agents.
 
 ### coordinator (internal-only)
 
@@ -294,6 +295,53 @@ Every move goes through `domain/devboard/state_machine.py` with an optimistic `v
 (ARCH-11). Only one active top-level run per task is allowed (partial unique index), and
 `POST /tasks/{id}/kill` stops the run and releases its leases.
 
+### Task chat (dev board)
+
+`/tasks/{id}/chat` (spec tag "Task chat", `docs/features/task-chat.md`) lets anyone who can edit
+a card discuss it with Claude (feature `task_chat`). Each account has its own conversation and
+proposals (`task_chat_messages`, `task_chat_proposals`: user-owned, RLS `FORCE`d, migration
+0006), although the card is shared.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Person
+    participant A as api
+    participant S as TaskChatService
+    participant C as Task-chat agent
+    participant L as LlmService
+    participant D as ProposalDecisions
+
+    P->>A: POST /tasks/{id}/chat (ai tier)
+    A->>S: ContentGuard.inspect_input(message), fail closed
+    S->>C: card, triage, plan summary, last 40 turns (data blocks)
+    loop at most 5 turns
+        C->>L: next_action (tools: get_task, get_triage, get_plan, propose_task_edit)
+        C->>S: tool via BoundTools (this card only)
+        S-->>P: event: step (redacted)
+    end
+    Note over S: propose_task_edit stores a pending proposal<br/>(PII-redacted field diffs), never edits the card
+    S-->>P: event: segment / retract (segment filter), done
+    P->>A: POST .../proposals/{pid}/accept {version}
+    A->>D: no active run, version, not done, fields unchanged
+    D->>D: BoardService.update (redaction, edited event)
+    opt card past triage
+        D->>D: withdraw plan approval, return_to_backlog, queue_triage, chat note
+    end
+```
+
+- **Layers:** `domain/devboard/task_chat.py` (history, send, the reply stream), `task_chat_tools.py`
+  (the agent's tools bound to one card and account), `task_chat_decisions.py` (accept, reject),
+  `proposals.py` (pure: body split into description and `## Acceptance criteria`, diffs,
+  staleness, the task edit). Ports in `domain/ports/task_chat.py`; the agent in
+  `agents/task_chat/`; stores `adapters/db/task_chat.py` and `adapters/fakes/task_chat.py`;
+  routes `api/devboard/chat.py`. The stream reuses the role-chat `SegmentRelay` and SSE framing
+  (`api/jobs/sse.py`) plus `step` frames, wrapped by `api/stream_guard.py`.
+- **Staleness rule** (`state_machine.edit_returns_to_backlog`): an accepted edit on Backlog,
+  Triaged or Out of scope re-triages in place; on any later column except Done, the plan
+  approval is withdrawn, the card goes back to Backlog and is triaged again; Done refuses (422).
+  Nothing is applied while a run is active (409).
+
 ### Company research agent
 
 `POST /targets/{id}/research-runs` starts `agents/research`. It's a manual tool-use loop: each
@@ -324,7 +372,7 @@ Tables, conventions and indexes are in `data-model.md`. In summary:
 
 | Kind | Tables | Access |
 | --- | --- | --- |
-| User-owned (U) | `roles`, `role_kits`, `role_events`, `role_chats`, `role_chat_files`, `role_evidence`, `role_recruiters`, `rejections`, `followups`, `contacts`, `targets`, `research_runs`, `campaign_*`, `experience*`, `profile_documents`, `role_pool`, `user_settings`, `llm_calls` | RLS `user_id = current_setting('app.user_id')`, `FORCE`d; the app role isn't the owner |
+| User-owned (U) | `roles`, `role_kits`, `role_events`, `role_chats`, `role_chat_files`, `task_chat_messages`, `task_chat_proposals`, `role_evidence`, `role_recruiters`, `rejections`, `followups`, `contacts`, `targets`, `research_runs`, `campaign_*`, `experience*`, `profile_documents`, `role_pool`, `user_settings`, `llm_calls` | RLS `user_id = current_setting('app.user_id')`, `FORCE`d; the app role isn't the owner |
 | Shared (S) | `dev_tasks`, `task_events`, `task_triage`, `task_plans`, `runs`, `run_steps`, `leases`, `lease_waits` | Both accounts read; maintainer-only writes enforced in the domain |
 | System (Sys) | `users`, `llm_budget_usage`, `rate_limit_buckets`, `web_events`, `job_runs`, `scan_runs`, `app_state` | Written by the app or jobs, never returned raw |
 
@@ -461,6 +509,7 @@ Per `standards/testing.md`. No test touches the network; LLM calls replay fixtur
 | Scanning | Simulated from seed data (`PgSeedFeed`) | Real Seek/LinkedIn scrapers behind `JobSource` (after the demo) |
 | Sign-in | Identity Platform email/password locally (two accounts) | Same in prod |
 | Dev board: CRUD, drag-and-drop, state machine, triage, plan review | Running, with `SimulatedAgentRunner`; sandboxed Docker runs, coordinator and Claude agent loop built locally (`--with-agents`) | M2: Publisher checks, Claude review, diff view |
+| Dev board task chat (Claude proposes card edits; accept/reject) | API built (backend, replay fixtures); web UI next | — |
 | Cross-model review (Gemini) | `vertex-gemini` stub | M3 |
 | Multi-agent teams, lease map, overhead metric | Lease tables and domain logic exist | M4 |
 | MCP (user-facing server, coordinator, harness) | Dropped (ADR-0009) | None |

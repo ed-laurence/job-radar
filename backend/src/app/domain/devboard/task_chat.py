@@ -113,7 +113,6 @@ class TaskChatService:
             created_at=self._clock.now(),
         )
         await self._store.add_message(actor.user_id, message)
-        self._busy.add(key)
         context = ChatContext(
             actor=actor,
             task=task,
@@ -122,6 +121,7 @@ class TaskChatService:
             history=tuple(history),
             message=content,
         )
+        self._busy.add(key)
         return self._reply(context)
 
     async def _reply(self, context: ChatContext) -> AsyncIterator[TaskChatEvent]:

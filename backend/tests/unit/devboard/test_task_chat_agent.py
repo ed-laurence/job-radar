@@ -109,15 +109,16 @@ async def test_bad_calls_come_back_as_errors_and_only_one_proposal_is_kept(
     async for ui in _scripted(container, script):
         task_id, events = await _chat(ui)
         steps = [data for name, data in events if name == "step"]
+        # A tool that isn't on offer never runs: the adapter refuses the turn and asks again.
+        assert all(step["tool"] != "read_repository" for step in steps)
         assert [step["summary"] for step in steps] == [
-            "Asked for a tool that doesn't exist.",
             "Couldn't propose the edit: Invalid input: pass title, description, "
             "acceptance_criteria and reason.",
             "Proposed an edit to the title.",
             "Couldn't propose the edit: You already proposed an edit in this reply.",
         ]
         last = _outputs(script.requests[-1])
-        assert [output.is_error for output in last] == [True, True, False, True]
+        assert [output.is_error for output in last] == [True, False, True]
         history = (await ui.http.get(f"/api/tasks/{task_id}/chat", headers=AS_MAINTAINER)).json()
         title = history["items"][-1]["proposal"]["changes"]["title"]["after"]
         assert "ops@example.test" not in title

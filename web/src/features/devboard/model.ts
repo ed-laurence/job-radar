@@ -1,4 +1,5 @@
 import { isApiError, type Schemas } from "@/lib/api";
+import type { AppRole } from "@/lib/session";
 import { COLUMN_LABELS, TASK_COLUMNS, type TaskColumn } from "./columns";
 import { rankBetween } from "./rank";
 
@@ -117,4 +118,12 @@ export function moveErrorMessage(error: unknown, task: Task, to: TaskColumn): st
   const reference =
     isApiError(error) && error.correlationId ? ` Reference: ${error.correlationId}` : "";
   return `Couldn't move ${name}. Try again.${reference}`;
+}
+
+/**
+ * Whether the signed-in account may edit cards (and so chat about them): any allowlisted account,
+ * either role, which is any account whose role the API reports. UX only; the API enforces it.
+ */
+export function canEditTask(role: AppRole | undefined): boolean {
+  return role !== undefined;
 }

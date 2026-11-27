@@ -1539,7 +1539,7 @@ export interface paths {
          * @description Applies the proposal through the normal task update: `version` check, PII redaction of the new text, an `edited` event in the card's history. Same rights as `updateTask`.
          *
          *     - Backlog, Triaged, Out of scope: triage re-runs, as for any text edit.
-         *     - Plan review, Ready, Blocked, Agent review, Changes requested, Human review (with no active run): the triage and the plan approval are stale, so the plan approval is withdrawn, the card goes back to `backlog` (`returned_to_backlog`, with a `note`) and triage re-runs.
+         *     - Plan review, Ready, Blocked, Agent dev, Agent review, Changes requested, Human review (with no active run): the triage and the plan approval are stale, so the plan approval is withdrawn, the card goes back to `backlog` (`returned_to_backlog`, with a `note`) and triage re-runs.
          *     - Done: 422 `illegal-transition`.
          *
          *     409 `version-conflict` when `version` is stale (with `current_version`), when a proposed field changed since the proposal (with `current_version`), when the proposal was already decided, or while an agent run is active on the card (no `current_version`; the detail says to wait for the run or stop it).

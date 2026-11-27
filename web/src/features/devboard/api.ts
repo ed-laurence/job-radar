@@ -24,6 +24,8 @@ export const devboardKeys = {
   triage: (id: string) => ["devboard", "task", id, "triage"] as const,
   plan: (id: string) => ["devboard", "task", id, "plan"] as const,
   runs: (id: string) => ["devboard", "task", id, "runs"] as const,
+  /** Outside the task prefix, so refreshing the card never refetches a chat mid-reply. */
+  chat: (id: string) => ["devboard", "chat", id] as const,
 };
 
 /** 404 means "not there yet" (no triage or plan so far), not an error. */

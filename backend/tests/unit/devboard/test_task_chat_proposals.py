@@ -143,6 +143,7 @@ def test_edits_before_planning_are_triaged_in_place(column: Column) -> None:
         Column.PLAN_REVIEW,
         Column.READY,
         Column.BLOCKED,
+        Column.AGENT_DEV,
         Column.AGENT_REVIEW,
         Column.CHANGES_REQUESTED,
         Column.HUMAN_REVIEW,

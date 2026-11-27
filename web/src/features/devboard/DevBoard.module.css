@@ -444,3 +444,152 @@
   grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
   gap: var(--space-4);
 }
+
+/* Task chat: a fixed-height, chat-style window that follows the newest reply. */
+.chatWindow {
+  max-height: 32rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.chatWindow:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.message,
+.messageUser {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.messageUser {
+  align-self: flex-end;
+  max-width: 85%;
+  background: var(--color-accent-soft);
+}
+
+.author {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.chatSteps {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 var(--space-2);
+  border-left: 2px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.redacted {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+}
+
+.field .chatInput {
+  min-height: 5rem;
+  resize: vertical;
+}
+
+.proposal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  min-width: 0;
+}
+
+.proposalResolved {
+  border-color: var(--color-border);
+}
+
+.proposalLegend {
+  padding: 0 var(--space-1);
+  font-weight: 600;
+}
+
+.proposalReason {
+  margin: 0;
+}
+
+.diffField {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.diffLegend {
+  padding: 0;
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+
+.diffLine {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diffTag {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.diffAdded {
+  text-decoration: underline;
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+.diffRemoved {
+  text-decoration: line-through;
+  background: var(--color-danger-surface);
+  color: var(--color-text);
+}
+
+.criteria {
+  margin: 0;
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.criterionSame {
+  color: var(--color-text-muted);
+}

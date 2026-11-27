@@ -23,8 +23,10 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { COLUMN_LABELS } from "./columns";
 import styles from "./DevBoard.module.css";
 import { actionErrorMessage } from "./messages";
+import { canEditTask } from "./model";
 import { PlanPanel } from "./PlanPanel";
 import { RunTree } from "./RunTree";
+import { TaskChat } from "./TaskChat";
 import { TaskFormDrawer, type TaskFormValues } from "./TaskFormDrawer";
 import { TriagePanel } from "./TriagePanel";
 
@@ -199,6 +201,7 @@ export function TaskDetailPage({ taskId, apiBase }: TaskDetailPageProps) {
           refreshAll();
         }}
       />
+      {canEditTask(role) ? <TaskChat task={t} apiBase={apiBase} /> : null}
 
       {dialog === "edit" ? (
         <TaskFormDrawer
