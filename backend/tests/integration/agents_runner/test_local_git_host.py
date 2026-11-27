@@ -94,6 +94,26 @@ async def _agent_edits(root: Path, env: dict[str, str], input_bundle: Path) -> P
     return result
 
 
+# Regression: on Windows git records no exec bit, so the snapshot stored scripts/gen-api.sh as
+# 100644 and the sandbox writer got "Permission denied" running it. Scripts (a `#!` first line)
+# are executable in the snapshot; other files are not.
+async def test_snapshot_keeps_scripts_executable(tmp_path: Path) -> None:
+    source = Source(tmp_path)
+    await source.init()
+    (source.repo / "scripts").mkdir()
+    (source.repo / "scripts" / "gen.sh").write_text("#!/usr/bin/env bash\necho hi\n", "utf-8")
+    (source.repo / "notes.txt").write_text("#not a script\n", encoding="utf-8")
+    host = LocalGitHost(source.repo, tmp_path / "cache" / "agent-remote")
+    snapshot = await host.snapshot(tmp_path / "in" / "input.bundle")
+    clone = tmp_path / "check"
+    await _git(tmp_path, source.env, "clone", "-q", str(snapshot.bundle), str(clone))
+    modes = await _git(clone, source.env, "ls-tree", "-r", "HEAD")
+    by_path = {line.split("\t")[1]: line.split()[0] for line in modes.splitlines()}
+    assert by_path["scripts/gen.sh"] == "100755"
+    assert by_path["notes.txt"] == "100644"
+    assert by_path["app.py"] == "100644"
+
+
 async def test_snapshot_publish_and_diff_leave_the_source_repo_untouched(tmp_path: Path) -> None:
     source = Source(tmp_path)
     await source.init()

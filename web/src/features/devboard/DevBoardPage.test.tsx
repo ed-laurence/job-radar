@@ -68,8 +68,8 @@ function column(label: string) {
 /** Picks up a card with the keyboard, presses arrows, and drops it (dnd-kit KeyboardSensor). */
 async function keyboardDrag(title: string, keys: string[]) {
   const user = userEvent.setup();
-  const handle = screen.getByRole("button", { name: `Move “${title}”` });
-  handle.focus();
+  const card = screen.getByRole("article", { name: title });
+  card.focus();
   await user.keyboard("[Space]");
   for (const key of keys) await user.keyboard(key);
   await user.keyboard("[Space]");
@@ -111,9 +111,9 @@ describe("DevBoardPage", () => {
     layoutBoard();
     renderWithApi(<DevBoardPage />);
     await screen.findByText("Polish chart");
-    const handle = screen.getByRole("button", { name: "Move “Polish chart”" });
-    expect(handle).toHaveAttribute("aria-roledescription", "sortable");
-    expect(handle).toHaveAccessibleDescription(/press Space or Enter to pick it up/i);
+    const card = screen.getByRole("article", { name: "Polish chart" });
+    expect(card).toHaveAttribute("aria-roledescription", "sortable");
+    expect(card).toHaveAccessibleDescription(/press Space or Enter to pick it up/i);
 
     // Triaged → Out of scope → Plan review.
     await keyboardDrag("Polish chart", ["[ArrowRight]", "[ArrowRight]"]);
@@ -230,7 +230,7 @@ describe("DevBoardPage", () => {
     expect(within(column("Backlog")).queryByText("Maintainer only")).toBeNull();
 
     const user = userEvent.setup();
-    screen.getByRole("button", { name: "Move “Polish chart”" }).focus();
+    screen.getByRole("article", { name: "Polish chart" }).focus();
     await user.keyboard("[Space]");
     expect(within(column("Plan review")).getByText("Can’t drop here")).toBeInTheDocument();
     expect(within(column("Backlog")).queryByText("Can’t drop here")).toBeNull();

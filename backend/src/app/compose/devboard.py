@@ -18,10 +18,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.adapters.agents.docker_runner import DockerAgentRunner, SandboxConfig, SandboxDeps
+from app.adapters.agents.docker_triage import DockerTriageAgent
 from app.adapters.agents.process import AsyncioProcessRunner
 from app.adapters.agents.tokens import CoordinatorTokenMint
 from app.adapters.agents.usage import DockerUsageProbe
 from app.adapters.codehost.local_git import LocalGitHost
+from app.adapters.codehost.working_tree import ListedRepoFiles, WorkingTreeFiles
 from app.adapters.db.devboard_leases import PgLeaseStore
 from app.adapters.db.devboard_runs import PgRunStore
 from app.adapters.db.devboard_tasks import PgTaskStore
@@ -63,10 +65,12 @@ from app.domain.ports import LLM, NotificationHub
 from app.domain.ports.devboard import (
     AgentRunner,
     LeaseStore,
+    RepoFiles,
     RunFinish,
     RunStore,
     TaskStore,
     TextRedactor,
+    TriageAgent,
 )
 from app.domain.ports.task_chat import TaskChatStore
 from app.guards.redaction import Redactor
@@ -134,7 +138,8 @@ def agent_runner(
     redactor: TextRedactor | None = None,
 ) -> AgentRunner:
     """The simulation, or (AGENT_SANDBOX=docker, local only) the Docker writer sandbox with
-    LocalGitHost. Plan runs stay on the simulation either way. Builds touch no disk."""
+    LocalGitHost. Under docker, plan runs go to the sandboxed dev-lead unless
+    AGENT_PLANNER=simulation. Builds touch no disk."""
     simulated = SimulatedAgentRunner(sleep, step_delay=step_delay)
     settings = container.settings
     proxy_secret, coordinator_key = settings.llm_proxy_secret, settings.coordinator_token_key
@@ -147,13 +152,18 @@ def agent_runner(
         llm_base_url=settings.agent_llm_base_url,
         coordinator_url=settings.agent_coordinator_url,
         run_timeout_s=settings.agent_run_timeout_s,
+        plan_budget_usd=settings.agent_plan_budget_usd,
+        plan_timeout_s=settings.agent_plan_timeout_s,
+        triage_budget_usd=settings.agent_triage_budget_usd,
+        triage_timeout_s=settings.agent_triage_timeout_s,
+        triage_model=settings.agent_triage_model,
         artifacts_root=AGENT_ARTIFACTS,
     )
     deps = SandboxDeps(
         host=LocalGitHost(REPO_ROOT, settings.agent_remote_path),
         processes=AsyncioProcessRunner(),
         coordinator_tokens=CoordinatorTokenMint(coordinator_key.get_secret_value().encode()),
-        planner=simulated,
+        planner=simulated if settings.agent_planner == "simulation" else None,
         usage=DockerUsageProbe(config),
         redactor=redactor,
     )
@@ -212,6 +222,23 @@ def _labelled(stores: BoardStores, runner: AgentRunner) -> BoardStores:
     return replace(stores, runs=LabelledRunStore(stores.runs, runner.labels))
 
 
+def repo_files(container: Container) -> RepoFiles:
+    """The repo's files for path checks. Under replay a frozen listing keeps offline prompt
+    hashes stable; otherwise the working tree (`.gitignore`d files left out)."""
+    settings = container.settings
+    if settings.llm == "replay":
+        return ListedRepoFiles(settings.llm_fixtures_dir / "devboard" / "repo_files.txt")
+    return WorkingTreeFiles(REPO_ROOT)
+
+
+def triage_agent(container: Container, runner: AgentRunner, files: RepoFiles) -> TriageAgent:
+    """The read-only sandbox triage under AGENT_SANDBOX=docker (unless AGENT_TRIAGER=in_app),
+    else the in-app structured call."""
+    if isinstance(runner, DockerAgentRunner) and container.settings.agent_triager == "sandbox":
+        return DockerTriageAgent(runner, container.guard, container.pii)
+    return TriageLlmAgent(devboard_llm(container), container.guard, container.pii, files)
+
+
 def build(container: Container, *, sleep: Sleep = asyncio.sleep) -> DevboardRuntime:
     settings, clock, ids = container.settings, container.clock, container.ids
     redactor = Redactor(settings.denylist_values(), container.pii, container.guard)
@@ -223,16 +250,15 @@ def build(container: Container, *, sleep: Sleep = asyncio.sleep) -> DevboardRunt
     plans = PlanService(stores.tasks, board, clock, ids)
     leases = LeaseService(stores.leases, clock)
     dispatcher = InProcessDispatcher()
-    agents = Agents(
-        triage=TriageLlmAgent(devboard_llm(container), container.guard, container.pii),
-        runner=runner,
-    )
+    files = repo_files(container)
+    agents = Agents(triage=triage_agent(container, runner, files), runner=runner)
     workflow = Workflow(
         Stores(tasks=stores.tasks, runs=stores.runs),
         (board, runs, plans, leases),
         agents,
         dispatcher,
         (clock, ids),
+        repo_files=files,
     )
     board.attach(workflow)
     chats = task_chat_store(container)

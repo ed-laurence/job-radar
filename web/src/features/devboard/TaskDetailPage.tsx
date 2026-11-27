@@ -178,13 +178,14 @@ export function TaskDetailPage({ taskId, apiBase }: TaskDetailPageProps) {
       <PlanPanel
         plan={plan.data}
         loading={plan.isPending}
+        labels={t.labels ?? []}
         canApprove={maintainer && t.column === "plan_review"}
         approving={approve.isPending}
         error={approve.isError ? actionErrorMessage(approve.error, "approve the plan") : undefined}
-        onApprove={() => {
+        onApprove={(allowTestChanges) => {
           if (!plan.data) return;
           approve.mutate(
-            { plan: plan.data, task: t },
+            { plan: plan.data, task: t, allowTestChanges },
             { onSuccess: () => setNotice("Plan and tests approved. The card moved to Ready.") },
           );
         }}

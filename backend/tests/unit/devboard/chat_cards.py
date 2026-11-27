@@ -9,7 +9,7 @@ same card, column and message replay the same turns.
 from __future__ import annotations
 
 from app.domain.devboard.proposals import compose_body
-from tests.unit.devboard.cards import API_SEARCH
+from tests.unit.devboard.cards import API_SEARCH, verification
 
 MESSAGE = "Can you make the acceptance criteria testable?"
 CRITERIA = (
@@ -20,7 +20,7 @@ CRITERIA = (
 REASON = "The card has no written acceptance criteria an agent could test."
 REPLY = (
     "I proposed three acceptance criteria: partial name matches, ordering by last contact date, "
-    "and an empty search. Accept them and triage will turn them into tests."
+    "and an empty search. Accept them and the planner will turn them into tests."
 )
 STEP_SUMMARIES = ("Read the card.", "Proposed an edit to the acceptance criteria.")
 
@@ -43,26 +43,11 @@ TURNS: tuple[dict[str, object], ...] = (
 )
 
 EDITED_BODY = compose_body(API_SEARCH.body, CRITERIA)
-EDITED_TRIAGE: dict[str, object] = {
-    "type": "feature",
-    "size": "S",
-    "risk": "low",
-    "areas": ["api"],
-    "acceptance_criteria": [
-        {
-            "test_id": "backend/tests/unit/test_contacts_search.py::matches part of a name",
-            "expectation": "GET /contacts?q=ali returns only contacts whose name contains ali",
-        },
-        {
-            "test_id": "backend/tests/unit/test_contacts_search.py::orders by last contact",
-            "expectation": "results are ordered by last_contacted_at, newest first",
-        },
-        {
-            "test_id": "backend/tests/unit/test_contacts_search.py::empty search lists all",
-            "expectation": "GET /contacts?q= returns every contact",
-        },
-    ],
-    "needs_human_design": False,
-    "out_of_scope": False,
-    "likely_paths": ["backend/src/app/api/", "backend/src/app/domain/"],
+EDITED_TRIAGE: dict[str, object] = API_SEARCH.answer | {
+    "verification": verification(
+        "confirmed",
+        "The CRM routes list contacts but take no name filter; the card now says how to test it.",
+        "backend/src/app/api/jobs/crm.py",
+        "backend/src/app/domain/jobs/crm.py",
+    ),
 }

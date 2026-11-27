@@ -36,7 +36,13 @@ _WORDS = (
 )  # fmt: skip
 
 JsonSchema = Mapping[str, object]
-_SYNTHETIC_PATH = "web/src/features/synthetic/"
+# An existing, in-scope directory: dev-board triage checks every named path against the repo.
+_SYNTHETIC_PATH = "web/src/features/"
+# Properties that hold repo paths although their name doesn't say "path".
+_PATH_HINTS = frozenset({"code_refs"})
+# Enum picks that keep an offline card calm: dev-board triage would otherwise route every
+# synthesized card `now` at P0 and start planning it.
+_ENUM_HINTS: Mapping[str, str] = {"route": "next", "priority": "P3", "severity": "minor"}
 _PATTERN_CANDIDATES = (
     "backend/tests/unit/test_synthetic.py::test_synthetic_behaviour",
     "web/tests/e2e/synthetic.spec.ts::renders the synthetic state",
@@ -93,12 +99,24 @@ def _int_bound(schema: JsonSchema, key: str, default: int) -> int:
     return int(value) if isinstance(value, int | float) else default
 
 
+def _has_candidate(schema: JsonSchema) -> bool:
+    pattern = schema.get("pattern")
+    if not isinstance(pattern, str):
+        return True
+    return any(re.search(pattern, candidate) for candidate in _PATTERN_CANDIDATES)
+
+
 def _choice(schema: JsonSchema) -> JsonSchema | None:
+    """The first non-null option, or null when no candidate fits that option's pattern (e.g. a
+    card ref): a null passes validation where invented text would not."""
     options = _as_list(schema.get("anyOf")) or _as_list(schema.get("oneOf"))
     if not options:
         return None
     maps = [_as_map(option) for option in options]
     non_null = [option for option in maps if option.get("type") != "null"]
+    nulls = [option for option in maps if option.get("type") == "null"]
+    if non_null and nulls and not _has_candidate(non_null[0]):
+        return nulls[0]
     return non_null[0] if non_null else maps[0]
 
 
@@ -136,7 +154,8 @@ class _Synthesizer:
             return schema["const"]
         enum = _as_list(schema.get("enum"))
         if enum:
-            return enum[0]
+            preferred = _ENUM_HINTS.get(hint)
+            return preferred if preferred in enum else enum[0]
         if depth > _MAX_DEPTH:
             return None
         build = self._by_kind.get(_kind(schema), self._string)
@@ -157,7 +176,8 @@ class _Synthesizer:
     def _string(self, schema: JsonSchema, _depth: int, hint: str) -> object:
         low = _int_bound(schema, "minLength", 1)
         high = max(_int_bound(schema, "maxLength", 120), low)
-        if "path" in hint.lower() and "pattern" not in schema:
+        is_path = "path" in hint.lower() or hint in _PATH_HINTS
+        if is_path and "pattern" not in schema:
             return _SYNTHETIC_PATH  # a concrete, in-scope repo path (dev-board write allowlist)
         pattern = schema.get("pattern")
         if isinstance(pattern, str):

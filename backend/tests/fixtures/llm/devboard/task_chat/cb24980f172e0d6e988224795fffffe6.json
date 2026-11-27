@@ -3,7 +3,7 @@
   "input_tokens": 800,
   "model": "claude-sonnet-5-5",
   "output_tokens": 120,
-  "prompt_hash": "bcde99858514fd22db3396c37eb45139",
+  "prompt_hash": "cb24980f172e0d6e988224795fffffe6",
   "server_uses": [],
   "text": "Reading the card first.",
   "tool_call": {

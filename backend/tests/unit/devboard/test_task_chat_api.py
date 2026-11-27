@@ -109,9 +109,15 @@ async def test_accepting_on_a_triaged_card_edits_it_and_triages_it_again(ui: Boa
     card = await ui.task(str(task["id"]))
     assert card["column"] == "triaged"
     triage = (await ui.http.get(f"/api/tasks/{task['id']}/triage", headers=AS_USER)).json()
-    assert len(triage["acceptance_criteria"]) == len(chat_cards.CRITERIA)
+    # The new triage read the edited card; the planner turns its written criteria into tests.
+    verification = cast("dict[str, object]", chat_cards.EDITED_TRIAGE["verification"])
+    assert triage["verification"]["evidence"] == verification["evidence"]
     events = (await ui.http.get(f"/api/tasks/{task['id']}/events", headers=AS_USER)).json()
     assert "edited" in [event["kind"] for event in events["items"]]
+    assert (await ui.move(card, "plan_review")).status_code == 200
+    plan = (await ui.http.get(f"/api/tasks/{task['id']}/plan", headers=AS_USER)).json()
+    expectations = [item["expectation"] for item in plan["acceptance_criteria"]]
+    assert expectations == list(chat_cards.CRITERIA)
 
 
 async def test_accepting_past_triage_withdraws_plan_approval_and_returns_to_backlog(

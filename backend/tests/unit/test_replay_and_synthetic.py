@@ -66,9 +66,12 @@ async def test_unrecorded_prompt_is_synthesized_when_enabled(tmp_path: Path) -> 
 async def test_synthetic_satisfies_the_real_triage_schema() -> None:
     schema = TriageOutput.model_json_schema()
     response = await SyntheticProvider().complete(_request(schema))
-    parsed = TriageOutput.model_validate_json(response.text)  # incl. the test_id pattern
+    parsed = TriageOutput.model_validate_json(response.text)  # incl. enums and bounds
 
-    assert parsed.acceptance_criteria
+    # Triage writes no acceptance criteria (the planner does); it verifies, prioritises, routes.
+    assert "acceptance_criteria" not in TriageOutput.model_fields
+    assert parsed.verification.evidence
+    assert parsed.route_reason
 
 
 # Regression (e2e): synthetic `likely_paths` were sentences, so the domain marked every offline

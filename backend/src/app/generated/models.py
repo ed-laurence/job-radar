@@ -711,9 +711,73 @@ class TaskArea(StrEnum):
     api = "api"
 
 
+class TaskPriority(StrEnum):
+    """
+    P0 drop everything, P1 this milestone, P2 soon, P3 whenever.
+    """
+
+    P0 = "P0"
+    P1 = "P1"
+    P2 = "P2"
+    P3 = "P3"
+
+
+class TaskSeverity(StrEnum):
+    """
+    User impact and blast radius.
+    """
+
+    critical = "critical"
+    major = "major"
+    minor = "minor"
+    trivial = "trivial"
+
+
+class TriageRoute(StrEnum):
+    """
+    `now` starts planning straight away; `next` waits at the top of Triaged; `later` at the bottom.
+    """
+
+    now = "now"
+    next = "next"
+    later = "later"
+
+
+class Status(StrEnum):
+    confirmed = "confirmed"
+    not_reproduced = "not_reproduced"
+    unclear = "unclear"
+    duplicate = "duplicate"
+
+
+class CodeRef(RootModel[str]):
+    root: str = Field(..., max_length=300)
+
+
+class TriageVerification(BaseModel):
+    """
+    How triage checked the issue against the repo (read-only) and the open cards.
+    """
+
+    status: Status
+    evidence: str = Field(
+        ..., description="What was read or run, and what it showed.", max_length=1000
+    )
+    duplicate_of: UUID | None = Field(
+        None, description="The open card this one duplicates (status `duplicate` only)."
+    )
+    code_refs: list[CodeRef] = Field(
+        ...,
+        description="Existing repo paths the issue concerns. Every one exists in the repo.",
+        max_length=20,
+    )
+
+
 class Type(StrEnum):
     feature = "feature"
     bug = "bug"
+    security = "security"
+    performance = "performance"
     chore = "chore"
     refactor = "refactor"
     test = "test"
@@ -766,6 +830,14 @@ class Task(BaseModel):
     areas: list[TaskArea] | None = Field(None, max_length=2)
     labels: list[Label] | None = Field(None, max_length=20)
     needs_human_design: bool | None = None
+    priority: TaskPriority | None = None
+    severity: TaskSeverity | None = None
+    route: TriageRoute | None = None
+    allowed_columns: list[TaskColumn] | None = Field(
+        None,
+        description="The columns the caller may move this card to now (its own column excluded), from the server's state machine and the caller's role. A move to `ready` also needs an approved plan.",
+        max_length=11,
+    )
     out_of_scope_reason: str | None = Field(None, max_length=1000)
     blocked_reason: str | None = Field(None, max_length=1000)
     pii_redacted: bool | None = Field(
@@ -897,6 +969,10 @@ class AcceptanceCriterion(BaseModel):
     expectation: str = Field(..., max_length=1000)
 
 
+class LikelyPath(RootModel[str]):
+    root: str = Field(..., max_length=300)
+
+
 class TriageRequest(BaseModel):
     queued_at: AwareDatetime
     run_id: UUID
@@ -930,6 +1006,10 @@ class AcceptanceTest(RootModel[str]):
     root: str = Field(..., max_length=300)
 
 
+class TestsToChangeItem(RootModel[str]):
+    root: str = Field(..., max_length=300)
+
+
 class Budget(BaseModel):
     max_usd: float = Field(..., ge=0.0)
     max_minutes: int = Field(..., ge=0)
@@ -954,9 +1034,19 @@ class Plan(BaseModel):
     )
     mode: Mode
     subtasks: list[Subtask] = Field(..., max_length=20)
+    acceptance_criteria: list[AcceptanceCriterion] = Field(
+        ...,
+        description="Written by the planner against the repo (triage writes none). Each test id names an existing test file, or a new one in a directory that exists.",
+        max_length=30,
+    )
     acceptance_tests: list[AcceptanceTest] = Field(
         ...,
         description="Frozen failing test ids written by the test-only step.",
+        max_length=50,
+    )
+    tests_to_change: list[TestsToChangeItem] = Field(
+        ...,
+        description="Existing test files the plan has to edit (existing tests are read-only otherwise). Approving with `allow_test_changes` adds the matching `modify-tests:` label.",
         max_length=50,
     )
     budget: Budget
@@ -994,6 +1084,10 @@ class PlanApproval(BaseModel):
     )
     approve_tests: Literal[True]
     approve_plan: Literal[True]
+    allow_test_changes: bool | None = Field(
+        None,
+        description="Required (true) when the plan lists `tests_to_change` not already covered by a `modify-tests:` label; adds that label. 422 otherwise.",
+    )
     rank: str | None = Field(
         None,
         description='Fractional index. Items sort by byte order (COLLATE "C"). The client computes a key between its new neighbours; the server may rebalance keys.',
@@ -2310,7 +2404,21 @@ class TriageResult(BaseModel):
     size: Size
     risk: Risk1
     areas: list[TaskArea] = Field(..., max_length=2)
-    acceptance_criteria: list[AcceptanceCriterion] = Field(..., max_length=30)
+    priority: TaskPriority
+    severity: TaskSeverity
+    impact: str = Field(
+        ...,
+        description="User impact, blast radius and any deadline behind the priority.",
+        max_length=600,
+    )
+    route: TriageRoute
+    route_reason: str = Field(..., max_length=400)
+    verification: TriageVerification
+    likely_paths: list[LikelyPath] | None = Field(
+        None,
+        description="Repo paths triage expects the change to touch (each in the repo, or a new file in an existing directory). They set risk and scope, and the planner starts from them.",
+        max_length=30,
+    )
     needs_human_design: bool
     in_scope: bool
     out_of_scope_reason: str | None = Field(None, max_length=1000)

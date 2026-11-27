@@ -9,7 +9,7 @@
 # Env passed through by NAME only (values never on the command line or in logs):
 #   ANTHROPIC_AUTH_TOKEN   per-task llm-proxy token (python -m llm_proxy.mint)
 #   COORDINATOR_TOKEN      per-task coordinator token (jrc1)
-#   RUN_ID, AGENT_MODE (agent|stub), AGENT_MODEL, AGENT_MAX_TURNS, AGENT_TOKEN_BUDGET,
+#   RUN_ID, AGENT_MODE (agent|plan|triage|stub), AGENT_MODEL, AGENT_MAX_TURNS, AGENT_TOKEN_BUDGET,
 #   AGENT_TIMEOUT_S, TASK_BASE_REF, SANDBOX_SUITES, SANDBOX_POSTGRES
 # COORDINATOR_URL (HTTP API base) comes from AGENT_COORDINATOR_URL (default http://coordinator:8100),
 # ANTHROPIC_BASE_URL from AGENT_LLM_BASE_URL (http://llm-proxy:8080); both are reached directly on the internal network.

@@ -100,7 +100,7 @@ async def accept_task_chat_proposal(
     services: Services,
 ) -> TaskChatProposalAccepted:
     outcome = await services.proposals.accept(actor(principal), task_id, proposal_id, body.version)
-    return chat_mapping.accepted(outcome)
+    return chat_mapping.accepted(outcome, actor(principal))
 
 
 @router.post(

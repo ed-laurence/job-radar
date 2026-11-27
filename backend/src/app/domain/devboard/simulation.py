@@ -4,18 +4,22 @@ without touching the repo. The sandboxed runner replaces it in M2 behind the sam
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 
 from app.domain.devboard.model import (
     Area,
+    Criterion,
     NewStep,
     Risk,
     RunKind,
     Size,
     StepKind,
     Subtask,
+    TaskRecord,
     TriageRecord,
 )
+from app.domain.devboard.proposals import split_body
 from app.domain.devboard.triage_policy import AREA_DEFAULT_PATHS
 from app.domain.ports.devboard import AgentResult, PlanDraft, RunContext, RunTools
 
@@ -25,16 +29,40 @@ BUDGETS: dict[Size, tuple[float, int]] = {Size.S: (2.0, 30), Size.M: (5.0, 60), 
 TEST_PATHS: dict[Area, str] = {Area.API: "backend/tests/unit/", Area.WEB: "web/tests/"}
 ENGINEERS: dict[Area, str] = {Area.API: "backend-engineer", Area.WEB: "frontend-engineer"}
 CONTRACT = "api/openapi.yaml"
+# Where the simulated planner puts the acceptance tests (directories that exist in the repo).
+CRITERIA_FILES: dict[Area, str] = {
+    Area.API: "backend/tests/unit/test_acceptance.py",
+    Area.WEB: "web/tests/e2e/acceptance.spec.ts",
+}
+MAX_CRITERIA = 30
+_NOT_WORD = re.compile(r"[^a-z0-9]+")
 
 
-def draft_plan(triage: TriageRecord | None) -> PlanDraft:
+def _test_name(text: str, index: int) -> str:
+    slug = _NOT_WORD.sub("_", text.lower()).strip("_")[:60].rstrip("_")
+    return f"test_{index}_{slug}" if slug else f"test_{index}"
+
+
+def draft_criteria(task: TaskRecord, area: Area) -> tuple[Criterion, ...]:
+    """Triage writes no criteria, so the planner does: one per written criterion on the card
+    (`## Acceptance criteria` bullets), or one for the title when the card has none."""
+    _, written = split_body(task.body)
+    expectations = written[:MAX_CRITERIA] or (f"{task.title.strip()} works as described.",)
+    test_file = CRITERIA_FILES[area]
+    return tuple(
+        Criterion(f"{test_file}::{_test_name(text, index)}", text[:1000])
+        for index, text in enumerate(expectations, start=1)
+    )
+
+
+def draft_plan(task: TaskRecord, triage: TriageRecord | None) -> PlanDraft:
     """agents.md policy: single agent for one area, size S, low risk; otherwise a team led
     by the test-first `qa-expert` subtask."""
     areas = triage.areas if triage and triage.areas else (Area.API,)
     size = triage.size if triage else Size.M
     risk = triage.risk if triage else Risk.MEDIUM
     is_single = len(areas) == 1 and size is Size.S and risk is Risk.LOW
-    tests = tuple(c.test_id for c in triage.criteria) if triage else ()
+    criteria = draft_criteria(task, areas[0])
     subtasks: list[Subtask] = [
         Subtask(
             id="t0",
@@ -62,10 +90,11 @@ def draft_plan(triage: TriageRecord | None) -> PlanDraft:
     return PlanDraft(
         mode="single" if is_single else "multi",
         subtasks=tuple(subtasks),
-        acceptance_tests=tests,
+        acceptance_tests=tuple(criterion.test_id for criterion in criteria),
         budget_usd=budget_usd,
         budget_minutes=minutes,
         llm_risk=risk,
+        acceptance_criteria=criteria,
     )
 
 
@@ -88,7 +117,7 @@ class SimulatedAgentRunner:
         return True
 
     async def _plan(self, context: RunContext, tools: RunTools) -> AgentResult:
-        draft = draft_plan(context.triage)
+        draft = draft_plan(context.task, context.triage)
         script = (
             NewStep(StepKind.STATUS, "Dev-lead started (read-only).", "dev-lead"),
             NewStep(

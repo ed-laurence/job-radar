@@ -31,10 +31,43 @@ COLUMN_ORDER: tuple[Column, ...] = tuple(Column)
 class TaskType(StrEnum):
     FEATURE = "feature"
     BUG = "bug"
+    SECURITY = "security"
+    PERFORMANCE = "performance"
     CHORE = "chore"
     REFACTOR = "refactor"
     TEST = "test"
     DOCS = "docs"
+
+
+class Priority(StrEnum):
+    """P0 drop everything, P1 this milestone, P2 soon, P3 whenever."""
+
+    P0 = "P0"
+    P1 = "P1"
+    P2 = "P2"
+    P3 = "P3"
+
+
+class Severity(StrEnum):
+    CRITICAL = "critical"
+    MAJOR = "major"
+    MINOR = "minor"
+    TRIVIAL = "trivial"
+
+
+class Route(StrEnum):
+    """`now` starts planning; `next` waits at the top of Triaged; `later` at the bottom."""
+
+    NOW = "now"
+    NEXT = "next"
+    LATER = "later"
+
+
+class VerificationStatus(StrEnum):
+    CONFIRMED = "confirmed"
+    NOT_REPRODUCED = "not_reproduced"
+    UNCLEAR = "unclear"
+    DUPLICATE = "duplicate"
 
 
 class Size(StrEnum):
@@ -163,6 +196,9 @@ class TaskRecord:
     areas: tuple[Area, ...] = ()
     labels: tuple[str, ...] = ()
     needs_human_design: bool = False
+    priority: Priority | None = None
+    severity: Severity | None = None
+    route: Route | None = None
     out_of_scope_reason: str | None = None
     blocked_reason: str | None = None
     blocked_from: Column | None = None
@@ -191,19 +227,37 @@ class Criterion:
 
 
 @dataclass(frozen=True)
+class Verification:
+    """How triage checked the issue: against the repo (read-only) and the open cards.
+    Every `code_refs` path exists in the repo; `duplicate_of` is set only for DUPLICATE."""
+
+    status: VerificationStatus
+    evidence: str
+    code_refs: tuple[str, ...] = ()
+    duplicate_of: uuid.UUID | None = None
+
+
+@dataclass(frozen=True)
 class TriageRecord:
     task_id: uuid.UUID
     type: TaskType
     size: Size
     risk: Risk
     areas: tuple[Area, ...]
-    criteria: tuple[Criterion, ...]
+    priority: Priority
+    severity: Severity
+    impact: str
+    route: Route
+    route_reason: str
+    verification: Verification
     needs_human_design: bool
     in_scope: bool
     created_at: datetime
     out_of_scope_reason: str | None = None
     model: str | None = None
     provider: str | None = None
+    # The model's own paths (normalised, checked against the repo); a starting point for plans.
+    likely_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -228,6 +282,9 @@ class PlanRecord:
     budget_minutes: int
     risk: Risk
     created_at: datetime
+    tests_to_change: tuple[str, ...] = ()
+    # Written by the planner against the repo; triage writes none.
+    acceptance_criteria: tuple[Criterion, ...] = ()
     tests_approved_at: datetime | None = None
     plan_approved_at: datetime | None = None
     approved_by: uuid.UUID | None = None

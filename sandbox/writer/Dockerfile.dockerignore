@@ -18,6 +18,11 @@
 !sandbox/writer/agent_sdk.py
 !sandbox/writer/llm_usage.py
 !sandbox/writer/run_log.py
+!sandbox/writer/plan_contract.py
+!sandbox/writer/triage_contract.py
+!sandbox/writer/offline-caches.sh
+# Pinned generator versions only (sourced at build time for the gen-api caches).
+!scripts/lib/common.sh
 # Defence in depth, in case an allowlist line above is ever widened.
 **/.env
 **/.env.*

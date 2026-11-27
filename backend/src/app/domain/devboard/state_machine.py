@@ -29,7 +29,8 @@ _OPEN_TARGETS: dict[Column, frozenset[Column]] = {
 }
 SYSTEM_MOVES: dict[Column, frozenset[Column]] = {
     C.BACKLOG: frozenset({C.TRIAGED, C.OUT_OF_SCOPE}),
-    C.TRIAGED: frozenset({C.BACKLOG}),
+    # `plan_review`: triage routed the card `now` (the maintainer drag, done by code).
+    C.TRIAGED: frozenset({C.BACKLOG, C.PLAN_REVIEW}),
     C.OUT_OF_SCOPE: frozenset({C.BACKLOG}),
     C.PLAN_REVIEW: frozenset({C.READY}),
     C.AGENT_DEV: frozenset({C.AGENT_REVIEW}),

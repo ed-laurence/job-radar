@@ -79,7 +79,20 @@ TASK_COLUMN = (
     "blocked",
     "done",
 )
-TASK_TYPE = ("feature", "bug", "chore", "refactor", "test", "docs")
+TASK_TYPE = (
+    "feature",
+    "bug",
+    "security",
+    "performance",
+    "chore",
+    "refactor",
+    "test",
+    "docs",
+)
+TASK_PRIORITY = ("P0", "P1", "P2", "P3")
+TASK_SEVERITY = ("critical", "major", "minor", "trivial")
+TRIAGE_ROUTE = ("now", "next", "later")
+TRIAGE_VERIFICATION = ("confirmed", "not_reproduced", "unclear", "duplicate")
 TASK_SIZE = ("S", "M", "L")
 TASK_RISK = ("low", "medium", "high")
 TASK_AREA = ("web", "api")

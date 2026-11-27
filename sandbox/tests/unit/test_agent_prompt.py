@@ -87,3 +87,59 @@ def test_default_nonce_is_random() -> None:
 def test_oversized_task_refused_not_truncated() -> None:
     with pytest.raises(prompt.PromptError):
         prompt.build_user_turn({"brief": "w " * prompt.MAX_TASK_CHARS}, "T", "R")
+
+
+# ------------------------------------------------------------------ plan variant
+
+
+def test_plan_system_prompt_is_the_read_only_dev_lead(tmp_path: Path) -> None:
+    files = prompt.read_base_files(_base(tmp_path))
+    system = prompt.build_system_prompt(files, mode="plan")
+    assert system.startswith(prompt.PLAN_INSTRUCTIONS)
+    assert "rules-canary-1" in system and "testing-canary" in system
+    assert prompt.WRITER_INSTRUCTIONS not in system
+    for section in ("## Role", "## Scope", "## Process", "## Output"):
+        assert section in prompt.PLAN_INSTRUCTIONS
+    assert prompt.build_system_prompt(files) == prompt.build_system_prompt(files, mode="dev")
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "submit_plan",
+        "tests_to_change",
+        "git grep",
+        "backend/tests/contract/",
+        "backend/tests/integration/",
+        "*.test.tsx",
+        "scripts/gen-api.sh",
+        "generated/",
+        "modify-tests:",
+        "read-only",
+    ],
+)
+def test_plan_instructions_cover_the_planning_rules(rule: str) -> None:
+    assert rule in prompt.PLAN_INSTRUCTIONS
+
+
+# Regression: the planner read "existing tests change only under a modify-tests: label" as a
+# blocker and called request_help instead of listing the tests. The label is granted at plan
+# approval from tests_to_change, so a missing label must never stop planning.
+def test_a_missing_modify_tests_label_never_blocks_a_plan() -> None:
+    text = " ".join(prompt.PLAN_INSTRUCTIONS.split())
+    assert "A missing `modify-tests:` label is never a reason to stop" in text
+    assert "never for a missing label" in text
+    assert "when the maintainer approves the plan" in text
+
+
+def test_writer_instructions_mention_gen_api_and_existing_tests() -> None:
+    assert "scripts/gen-api.sh" in prompt.WRITER_INSTRUCTIONS
+    assert "modify-tests:" in prompt.WRITER_INSTRUCTIONS
+
+
+def test_plan_user_turn_asks_for_a_plan_not_edits() -> None:
+    turn = prompt.build_user_turn({"brief": "x"}, "T-1", "R-1", mode="plan")
+    tail = turn.rsplit(">", 1)[1]
+    assert "submit_plan" in tail and "claim_paths" not in tail and "post_handoff" not in tail
+    with pytest.raises(ValueError):
+        prompt.build_user_turn({"brief": "x"}, "T-1", "R-1", mode="review")

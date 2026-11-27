@@ -45,7 +45,9 @@ async def list_tasks(
     columns = tuple(Column(value.value) for value in column or ())
     query = TaskQuery(columns=columns, limit=limit, cursor=cursor)
     page = await services.board.list(actor(principal), query)
-    return TaskPage(items=[mapping.task(t) for t in page.items], next_cursor=page.next_cursor)
+    return TaskPage(
+        items=[mapping.task(t, actor(principal)) for t in page.items], next_cursor=page.next_cursor
+    )
 
 
 @router.post(
@@ -58,14 +60,15 @@ async def list_tasks(
 async def create_task(body: TaskCreate, principal: DefaultUser, services: Services) -> Task:
     labels = tuple(label.root for label in body.labels or ())
     created = await services.board.create(actor(principal), body.title, body.body, labels)
-    return mapping.task(created)
+    return mapping.task(created, actor(principal))
 
 
 @router.get(
     "/tasks/{taskId}", operation_id="getTask", response_model=Task, response_model_exclude_none=True
 )
 async def get_task(task_id: TaskId, principal: DefaultUser, services: Services) -> Task:
-    return mapping.task(await services.board.get(actor(principal), task_id))
+    viewer = actor(principal)
+    return mapping.task(await services.board.get(viewer, task_id), viewer)
 
 
 @router.patch(
@@ -79,7 +82,8 @@ async def update_task(
 ) -> Task:
     labels = None if body.labels is None else tuple(label.root for label in body.labels)
     edit = TaskEdit(version=body.version, title=body.title, body=body.body, labels=labels)
-    return mapping.task(await services.board.update(actor(principal), task_id, edit))
+    viewer = actor(principal)
+    return mapping.task(await services.board.update(viewer, task_id, edit), viewer)
 
 
 @router.delete("/tasks/{taskId}", operation_id="deleteTask", status_code=status.HTTP_204_NO_CONTENT)
@@ -105,7 +109,8 @@ async def move_task(
         version=body.version,
         reason=body.reason,
     )
-    return mapping.task(await services.board.move(actor(principal), task_id, move))
+    viewer = actor(principal)
+    return mapping.task(await services.board.move(viewer, task_id, move), viewer)
 
 
 @router.get(

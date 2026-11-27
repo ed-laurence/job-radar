@@ -2300,6 +2300,35 @@ export interface components {
         /** @enum {string} */
         TaskArea: "web" | "api";
         /**
+         * @description P0 drop everything, P1 this milestone, P2 soon, P3 whenever.
+         * @enum {string}
+         */
+        TaskPriority: "P0" | "P1" | "P2" | "P3";
+        /**
+         * @description User impact and blast radius.
+         * @enum {string}
+         */
+        TaskSeverity: "critical" | "major" | "minor" | "trivial";
+        /**
+         * @description `now` starts planning straight away; `next` waits at the top of Triaged; `later` at the bottom.
+         * @enum {string}
+         */
+        TriageRoute: "now" | "next" | "later";
+        /** @description How triage checked the issue against the repo (read-only) and the open cards. */
+        TriageVerification: {
+            /** @enum {string} */
+            status: "confirmed" | "not_reproduced" | "unclear" | "duplicate";
+            /** @description What was read or run, and what it showed. */
+            evidence: string;
+            /**
+             * Format: uuid
+             * @description The open card this one duplicates (status `duplicate` only).
+             */
+            duplicate_of?: string;
+            /** @description Existing repo paths the issue concerns. Every one exists in the repo. */
+            code_refs: string[];
+        };
+        /**
          * @description Dev-board card. The board is shared between both accounts (no per-user rows).
          * @example {
          *       "id": "00000000-0000-4000-8000-0000000000b1",
@@ -2323,7 +2352,7 @@ export interface components {
             /** @description Optimistic concurrency version. Send the version you read; a mismatch returns 409. */
             version: number;
             /** @enum {string} */
-            type?: "feature" | "bug" | "chore" | "refactor" | "test" | "docs";
+            type?: "feature" | "bug" | "security" | "performance" | "chore" | "refactor" | "test" | "docs";
             /** @enum {string} */
             size?: "S" | "M" | "L";
             /** @enum {string} */
@@ -2331,6 +2360,11 @@ export interface components {
             areas?: components["schemas"]["TaskArea"][];
             labels?: string[];
             needs_human_design?: boolean;
+            priority?: components["schemas"]["TaskPriority"];
+            severity?: components["schemas"]["TaskSeverity"];
+            route?: components["schemas"]["TriageRoute"];
+            /** @description The columns the caller may move this card to now (its own column excluded), from the server's state machine and the caller's role. A move to `ready` also needs an approved plan. */
+            allowed_columns?: components["schemas"]["TaskColumn"][];
             out_of_scope_reason?: string;
             blocked_reason?: string;
             /** @description True when the server redacted PII from title or body on the last save. */
@@ -2424,13 +2458,21 @@ export interface components {
             /** Format: uuid */
             task_id: string;
             /** @enum {string} */
-            type: "feature" | "bug" | "chore" | "refactor" | "test" | "docs";
+            type: "feature" | "bug" | "security" | "performance" | "chore" | "refactor" | "test" | "docs";
             /** @enum {string} */
             size: "S" | "M" | "L";
             /** @enum {string} */
             risk: "low" | "medium" | "high";
             areas: components["schemas"]["TaskArea"][];
-            acceptance_criteria: components["schemas"]["AcceptanceCriterion"][];
+            priority: components["schemas"]["TaskPriority"];
+            severity: components["schemas"]["TaskSeverity"];
+            /** @description User impact, blast radius and any deadline behind the priority. */
+            impact: string;
+            route: components["schemas"]["TriageRoute"];
+            route_reason: string;
+            verification: components["schemas"]["TriageVerification"];
+            /** @description Repo paths triage expects the change to touch (each in the repo, or a new file in an existing directory). They set risk and scope, and the planner starts from them. */
+            likely_paths?: string[];
             needs_human_design: boolean;
             in_scope: boolean;
             out_of_scope_reason?: string;
@@ -2462,8 +2504,12 @@ export interface components {
             /** @enum {string} */
             mode: "single" | "multi";
             subtasks: components["schemas"]["Subtask"][];
+            /** @description Written by the planner against the repo (triage writes none). Each test id names an existing test file, or a new one in a directory that exists. */
+            acceptance_criteria: components["schemas"]["AcceptanceCriterion"][];
             /** @description Frozen failing test ids written by the test-only step. */
             acceptance_tests: string[];
+            /** @description Existing test files the plan has to edit (existing tests are read-only otherwise). Approving with `allow_test_changes` adds the matching `modify-tests:` label. */
+            tests_to_change: string[];
             budget: {
                 max_usd: number;
                 max_minutes: number;
@@ -2504,6 +2550,8 @@ export interface components {
             approve_tests: true;
             /** @constant */
             approve_plan: true;
+            /** @description Required (true) when the plan lists `tests_to_change` not already covered by a `modify-tests:` label; adds that label. 422 otherwise. */
+            allow_test_changes?: boolean;
             /** @description Fractional index. Items sort by byte order (COLLATE "C"). The client computes a key between its new neighbours; the server may rebalance keys. */
             rank?: string;
         };

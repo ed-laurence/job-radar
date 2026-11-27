@@ -16,6 +16,7 @@ from app.adapters.db.devboard_mappers import (
     task_select,
     task_values,
     triage_record,
+    triage_values,
 )
 from app.adapters.db.engine import user_transaction
 from app.adapters.db.tables_board import (
@@ -182,24 +183,8 @@ class PgTaskStore:
         ]
 
     async def add_triage(self, user_id: uuid.UUID, triage: TriageRecord) -> None:
-        values = {
-            "task_id": triage.task_id,
-            "type": triage.type.value,
-            "size": triage.size.value,
-            "risk": triage.risk.value,
-            "areas": [area.value for area in triage.areas],
-            "acceptance_criteria": [
-                {"test_id": c.test_id, "expectation": c.expectation} for c in triage.criteria
-            ],
-            "needs_human_design": triage.needs_human_design,
-            "in_scope": triage.in_scope,
-            "out_of_scope_reason": triage.out_of_scope_reason,
-            "model": triage.model,
-            "provider": triage.provider,
-            "created_at": triage.created_at,
-        }
         async with user_transaction(self._sessions, user_id) as session:
-            await session.execute(insert(TaskTriage).values(values))
+            await session.execute(insert(TaskTriage).values(triage_values(triage)))
 
     async def latest_triage(self, user_id: uuid.UUID, task_id: uuid.UUID) -> TriageRecord | None:
         query = (

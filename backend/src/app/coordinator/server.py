@@ -46,7 +46,8 @@ from app.coordinator.schemas import (
     StepRequest,
     parse_capped,
 )
-from app.coordinator.service import CoordinatorService, Json, ResultTooLarge, Scope
+from app.coordinator.service import CoordinatorService, Json, Scope
+from app.coordinator.task_pages import ResultTooLarge
 from app.coordinator.tokens import TokenRefused, verify
 from app.coordinator.wiring import CoordinatorRuntime, build_runtime
 from app.domain.devboard.messages import estimate_tokens

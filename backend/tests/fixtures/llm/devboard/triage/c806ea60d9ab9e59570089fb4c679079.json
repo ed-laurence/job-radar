@@ -1,0 +1,8 @@
+{
+  "feature": "triage",
+  "input_tokens": 900,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 300,
+  "prompt_hash": "c806ea60d9ab9e59570089fb4c679079",
+  "text": "{\"type\": \"feature\", \"size\": \"M\", \"risk\": \"low\", \"areas\": [\"web\", \"api\"], \"priority\": \"P2\", \"severity\": \"minor\", \"impact\": \"Maintainers can't see what a run cost without the logs.\", \"route\": \"next\", \"route_reason\": \"Useful soon; nothing is broken.\", \"verification\": {\"status\": \"confirmed\", \"evidence\": \"The run node shows status and agent but no cost.\", \"code_refs\": [\"web/src/features/devboard/RunNode.tsx\"], \"duplicate_of\": null}, \"needs_human_design\": false, \"out_of_scope\": false, \"likely_paths\": [\"web/src/features/devboard/\", \"api/openapi.yaml\"]}"
+}

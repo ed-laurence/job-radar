@@ -84,18 +84,38 @@ COPY web/package.json web/pnpm-lock.yaml ./
 RUN set -eux; \
     pnpm install --frozen-lockfile --store-dir /opt/deps/pnpm-store --config.confirmModulesPurge=false; \
     ln -s /tmp/vite-cache node_modules/.vite; \
+    ln -s /tmp/vite-temp node_modules/.vite-temp; \
     rm -rf /workspace/repo /root/.cache /root/.local
 
+# --- Offline generators for scripts/gen-api.sh, at the versions pinned in scripts/lib/common.sh:
+# datamodel-code-generator + ruff (an ephemeral `uv run --with` env) and openapi-typescript (an
+# `npx -y` install). Both caches are read-only here; offline-caches.sh copies them under /tmp at
+# runtime because uv and npx write to their caches (to /workspace: /tmp is a noexec tmpfs).
+COPY scripts/lib/common.sh /opt/deps/gen-versions.sh
+RUN set -eux; \
+    eval "$(grep -E '^JR_(PYTHON|DATAMODEL_CODEGEN|RUFF|OPENAPI_TS)_VERSION="[0-9.]+"$' /opt/deps/gen-versions.sh)"; \
+    test -n "$JR_DATAMODEL_CODEGEN_VERSION" -a -n "$JR_RUFF_VERSION" -a -n "$JR_OPENAPI_TS_VERSION"; \
+    UV_CACHE_DIR=/opt/deps/gen-cache/uv uv run --no-project --quiet --python "$JR_PYTHON_VERSION" \
+      --with "datamodel-code-generator==${JR_DATAMODEL_CODEGEN_VERSION}" --with "ruff==${JR_RUFF_VERSION}" \
+      datamodel-codegen --version; \
+    npm_config_cache=/opt/deps/gen-cache/npm npx -y "openapi-typescript@${JR_OPENAPI_TS_VERSION}" --version; \
+    rm -rf /opt/deps/gen-cache/npm/_logs /root/.npm /root/.cache; \
+    chmod -R a+rX /opt/deps/gen-cache
+
 # --- Runtime user and layout. Only /workspace, /tmp and /out are writable (see sandbox/run.sh).
-COPY sandbox/writer/entrypoint.sh sandbox/writer/handoff.py sandbox/writer/pytest_report.py \
-     sandbox/writer/agent_runner.py sandbox/writer/agent_policy.py sandbox/writer/agent_prompt.py \
-     sandbox/writer/coordinator_client.py sandbox/writer/coordinator_tools.py sandbox/writer/agent_sdk.py      sandbox/writer/llm_usage.py sandbox/writer/run_log.py /opt/sandbox/
+COPY sandbox/writer/entrypoint.sh sandbox/writer/offline-caches.sh sandbox/writer/handoff.py \
+     sandbox/writer/pytest_report.py sandbox/writer/agent_runner.py sandbox/writer/agent_policy.py \
+     sandbox/writer/agent_prompt.py sandbox/writer/coordinator_client.py \
+     sandbox/writer/coordinator_tools.py sandbox/writer/agent_sdk.py sandbox/writer/llm_usage.py \
+     sandbox/writer/run_log.py sandbox/writer/plan_contract.py sandbox/writer/triage_contract.py \
+     /opt/sandbox/
 RUN set -eux; \
     useradd --uid "${SANDBOX_UID}" --user-group --no-create-home --home-dir /tmp/home \
       --shell /usr/sbin/nologin sandbox; \
     mkdir -p /workspace /in /out; \
     chown "${SANDBOX_UID}:${SANDBOX_UID}" /workspace /out; \
-    chmod 0755 /opt/sandbox/entrypoint.sh; \
+    chmod 0755 /opt/sandbox/entrypoint.sh /opt/sandbox/offline-caches.sh; \
+    /usr/local/bin/python3 -c "import sys; sys.path.insert(0, '/opt/sandbox'); import handoff, plan_contract, triage_contract"; \
     /opt/agent/venv/bin/python -c "import sys; sys.path.insert(0, '/opt/sandbox'); import agent_runner, agent_sdk"
 
 # Offline everything at runtime.
@@ -103,7 +123,8 @@ ENV HOME=/tmp/home \
     UV_OFFLINE=1 \
     UV_FROZEN=1 \
     UV_NO_SYNC=1 \
-    UV_CACHE_DIR=/tmp/uv-cache \
+    UV_CACHE_DIR=/workspace/.cache/uv \
+    npm_config_cache=/workspace/.cache/npm \
     npm_config_offline=true \
     npm_config_store_dir=/opt/deps/pnpm-store \
     npm_config_update_notifier=false \

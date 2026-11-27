@@ -104,6 +104,22 @@ def _git_env() -> dict[str, str]:
     return env
 
 
+_CHMOD_BATCH = 100
+
+
+def _scripts(repo: Path, paths: Sequence[str]) -> list[str]:
+    """The paths (relative to `repo`) whose content starts with `#!`."""
+    found: list[str] = []
+    for path in paths:
+        try:
+            with (repo / path).open("rb") as handle:
+                if handle.read(2) == b"#!":
+                    found.append(path)
+        except OSError:
+            continue
+    return found
+
+
 def _inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
@@ -142,6 +158,7 @@ class LocalGitHost:
             await self._git(["init", "-q", "--bare", "-b", "main", str(git_dir)], cwd=scratch)
             tree = ["--git-dir", str(git_dir), "--work-tree", str(self._repo)]
             await self._git([*tree, "-c", "core.bare=false", "add", "-A"], cwd=scratch)
+            await self._mark_scripts_executable(tree, scratch)
             message = "Snapshot of the working tree for an agent run"
             commit = ["commit", "-q", "--no-verify", "--allow-empty", "-m", message]
             await self._git([*tree, "-c", "core.bare=false", *commit], cwd=scratch)
@@ -151,6 +168,18 @@ class LocalGitHost:
         finally:
             await asyncio.to_thread(shutil.rmtree, scratch, ignore_errors=True)
         return Snapshot(bundle=dest, base_sha=sha.strip())
+
+    async def _mark_scripts_executable(self, tree: list[str], scratch: Path) -> None:
+        """Git on Windows records no exec bit, so scripts would reach the sandbox as 100644
+        ("Permission denied" on `scripts/gen-api.sh`). Files whose first line is a `#!` are
+        made executable in the snapshot; the project's own `.git` is never read."""
+        listed = await self._git([*tree, "-c", "core.bare=false", "ls-files", "-z"], cwd=scratch)
+        paths = [path for path in listed.split("\0") if path]
+        scripts = await asyncio.to_thread(_scripts, self._repo, paths)
+        for start in range(0, len(scripts), _CHMOD_BATCH):
+            batch = scripts[start : start + _CHMOD_BATCH]
+            chmod = ["update-index", "--chmod=+x", "--", *batch]
+            await self._git([*tree, "-c", "core.bare=false", *chmod], cwd=scratch)
 
     # ------------------------------------------------------------ publish
     async def _ensure_remote(self) -> None:

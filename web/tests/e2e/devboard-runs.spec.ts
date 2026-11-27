@@ -69,7 +69,7 @@ test.describe("dev board run tree", () => {
     );
 
     // Keyboard: Triaged → Out of scope → Plan review (a maintainer move that starts the dev lead).
-    await page.getByRole("button", { name: `Move “${title}”` }).focus();
+    await page.getByRole("article", { name: title, exact: true }).focus();
     await page.keyboard.press("Space");
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("ArrowRight");

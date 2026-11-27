@@ -3,7 +3,7 @@
   "input_tokens": 800,
   "model": "claude-sonnet-5-5",
   "output_tokens": 120,
-  "prompt_hash": "85052f52acbde3705ecef7eb3ebbec1e",
+  "prompt_hash": "c5f8d857dd3a75c7084c9fe93415f959",
   "server_uses": [],
   "text": "Proposing written criteria.",
   "tool_call": {

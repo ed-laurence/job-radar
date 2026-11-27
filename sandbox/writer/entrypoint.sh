@@ -5,7 +5,7 @@
 # Out: /out/result.bundle (branch agent/<TASK_ID>) and /out/handoff.json; in agent mode also
 #      /out/agent.log (one metadata line per model turn) and /out/steps.jsonl (posted steps)
 # Env: TASK_ID (required), TASK_BASE_REF (default HEAD), SANDBOX_POSTGRES=1|0,
-#      SANDBOX_SUITES (default "backend,web"), AGENT_MODE=agent|stub (default agent)
+#      SANDBOX_SUITES (default "backend,web"), AGENT_MODE=agent|plan|triage|stub (default agent)
 #      agent mode also needs: ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, COORDINATOR_URL,
 #      COORDINATOR_TOKEN, RUN_ID; optional AGENT_MODEL, AGENT_MAX_TURNS, AGENT_TOKEN_BUDGET,
 #      AGENT_TIMEOUT_S (wall clock for the agent loop, default 3600)
@@ -13,6 +13,14 @@
 # AGENT_MODE=agent runs the Claude Agent SDK loop (agent_runner.py): the task comes from the
 # coordinator's get_task, the system prompt from AGENTS.md + docs/standards/ at the base commit.
 # AGENT_MODE=stub makes no edits and only runs the repo's tests (isolation plumbing test).
+# AGENT_MODE=plan is the read-only dev-lead planner: same checkout and base-commit prompt pack
+# and the same env as agent mode, but no Postgres, no test runs and no result bundle. The agent
+# leaves /out/plan.json (through its submit_plan tool) and the entrypoint writes
+# /out/handoff.json (done exactly when plan.json is valid), plus agent.log and steps.jsonl.
+# AGENT_MODE=triage is the read-only triager: plan mode's setup plus the base file list (the
+# agent may run EXISTING tests, named one by one, to reproduce; still no Postgres, no suite
+# run, no bundle). It leaves /out/triage.json (submit_triage) and the entrypoint writes
+# /out/handoff.json (done exactly when triage.json is valid).
 # Then the repo tests are re-run here (agent mode: only if the agent changed something;
 # otherwise skipped_checks says "no changes; tests not run"), whatever changed is committed on
 # the branch, and result.bundle + handoff.json are written. Exit 0 when the plumbing worked
@@ -42,7 +50,7 @@ fail_handoff() {
 [[ "$(id -u)" != 0 ]] || fail_handoff "refusing to run as root"
 [[ -f "$IN/input.bundle" ]] || fail_handoff "missing /in/input.bundle"
 [[ -w "$OUT" ]] || { log "error: /out is not writable"; exit 1; }
-mkdir -p "$HOME" "$RESULTS" /tmp/vite-cache /tmp/uv-cache
+mkdir -p "$HOME" "$RESULTS" /tmp/vite-cache /tmp/vite-temp /tmp/uv-cache
 
 # Git: no global hooks, no credential helpers, fixed identity, repo treated as data.
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
@@ -68,6 +76,76 @@ log "workspace at $BRANCH ($(git rev-parse --short HEAD))"
 printf '%s\n' '/web/node_modules' >> .git/info/exclude
 if [[ -d web && ! -e web/node_modules ]]; then ln -s /opt/deps/web/node_modules web/node_modules; fi
 
+AGENT_MODE="${AGENT_MODE:-agent}"
+AGENT_DIR=/tmp/agent
+
+need_agent_env() {
+  for name in ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN COORDINATOR_URL COORDINATOR_TOKEN RUN_ID; do
+    [[ -n "${!name:-}" ]] || fail_handoff "AGENT_MODE=$AGENT_MODE needs $name"
+  done
+  timeout_s="${AGENT_TIMEOUT_S:-3600}"
+  [[ "$timeout_s" =~ ^[0-9]{2,5}$ ]] || fail_handoff "AGENT_TIMEOUT_S must be 10-99999 seconds"
+  # The prompt pack comes from the BASE commit, extracted before the agent can touch anything.
+  mkdir -p "$AGENT_DIR/base"
+  git archive --format=tar "$base_sha" -- AGENTS.md docs/standards 2>/dev/null \
+    | tar -x -C "$AGENT_DIR/base" 2>/dev/null \
+    || fail_handoff "AGENTS.md or docs/standards/ missing at the base commit"
+}
+
+run_agent() { # extra runner args...; sets agent_rc
+  # timeout signals the whole process group, so the CLI child dies with the runner.
+  agent_rc=0
+  timeout --kill-after=20 "$timeout_s" /opt/agent/venv/bin/python /opt/sandbox/agent_runner.py \
+    --repo "$WORK" --base-dir "$AGENT_DIR/base" --out "$AGENT_DIR/result.json" --log-dir "$OUT" \
+    "$@" || agent_rc=$?
+  case $agent_rc in
+    0) ;;
+    124|137) log "agent: wall-clock timeout"; SKIPPED+=("agent: stopped at AGENT_TIMEOUT_S") ;;
+    3) log "agent: setup failed (see above)" ;;
+    4) log "agent: coordinator unreachable (see above); the model was not called" ;;
+    *) log "agent: runner exited $agent_rc" ;;
+  esac
+  if [[ $agent_rc -ne 0 && -s "$AGENT_DIR/cli.log" ]]; then
+    log "agent: last CLI stderr lines:"; tail -n 15 "$AGENT_DIR/cli.log" >&2 || true
+  fi
+}
+
+# ------------------------------------------------------------ plan mode: read-only planner
+if [[ "$AGENT_MODE" == plan ]]; then
+  need_agent_env
+  rm -f "$OUT/plan.json" "$OUT/plan.json.tmp" "$OUT/result.bundle"
+  log "agent: dev-lead planner, read-only (timeout ${timeout_s}s)"
+  run_agent --mode plan --plan-out "$OUT/plan.json"
+  cd "$WORK"
+  skip_args=()
+  for s in "${SKIPPED[@]+"${SKIPPED[@]}"}"; do skip_args+=(--skipped "$s"); done
+  /usr/local/bin/python3 /opt/sandbox/handoff.py --task-id "$TASK_ID" --plan-mode \
+    --plan-json "$OUT/plan.json" --agent-result "$AGENT_DIR/result.json" \
+    "${skip_args[@]+"${skip_args[@]}"}" --out "$OUT/handoff.json" || fail_handoff "handoff writer failed"
+  if [[ -f "$OUT/plan.json" ]]; then log "wrote /out/plan.json and /out/handoff.json"
+  else log "no plan written; wrote /out/handoff.json"; fi
+  exit 0
+fi
+
+# ------------------------------------------------------------ triage mode: read-only triager
+if [[ "$AGENT_MODE" == triage ]]; then
+  need_agent_env
+  rm -f "$OUT/triage.json" "$OUT/triage.json.tmp" "$OUT/result.bundle"
+  # Existing tests at the base commit: the only files the triager may run.
+  git ls-files -z > "$AGENT_DIR/base-files" || fail_handoff "git ls-files failed"
+  log "agent: triager, read-only (timeout ${timeout_s}s)"
+  run_agent --mode triage --triage-out "$OUT/triage.json" --base-files "$AGENT_DIR/base-files"
+  cd "$WORK"
+  skip_args=()
+  for s in "${SKIPPED[@]+"${SKIPPED[@]}"}"; do skip_args+=(--skipped "$s"); done
+  /usr/local/bin/python3 /opt/sandbox/handoff.py --task-id "$TASK_ID" --triage-mode \
+    --triage-json "$OUT/triage.json" --agent-result "$AGENT_DIR/result.json" \
+    "${skip_args[@]+"${skip_args[@]}"}" --out "$OUT/handoff.json" || fail_handoff "handoff writer failed"
+  if [[ -f "$OUT/triage.json" ]]; then log "wrote /out/triage.json and /out/handoff.json"
+  else log "no triage written; wrote /out/handoff.json"; fi
+  exit 0
+fi
+
 # ------------------------------------------------------------ 2. Postgres (inside the container)
 PGDATA=/tmp/pgdata PGSOCK=/tmp/pgsock
 pg_stop() { [[ -f "$PGDATA/postmaster.pid" ]] && pg_ctl -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 || true; }
@@ -85,39 +163,19 @@ else
 fi
 
 # ------------------------------------------------------------ 3. agent
-AGENT_MODE="${AGENT_MODE:-agent}"
-AGENT_DIR=/tmp/agent
 agent_args=()
 RUN_TESTS=1
 case "$AGENT_MODE" in
   stub) log "agent: stub (no edits)" ;;
   agent)
-    for name in ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN COORDINATOR_URL COORDINATOR_TOKEN RUN_ID; do
-      [[ -n "${!name:-}" ]] || fail_handoff "AGENT_MODE=agent needs $name"
-    done
-    timeout_s="${AGENT_TIMEOUT_S:-3600}"
-    [[ "$timeout_s" =~ ^[0-9]{2,5}$ ]] || fail_handoff "AGENT_TIMEOUT_S must be 10-99999 seconds"
-    # The prompt pack comes from the BASE commit, extracted before the agent can touch anything.
-    mkdir -p "$AGENT_DIR/base"
-    git archive --format=tar "$base_sha" -- AGENTS.md docs/standards 2>/dev/null \
-      | tar -x -C "$AGENT_DIR/base" 2>/dev/null \
-      || fail_handoff "AGENTS.md or docs/standards/ missing at the base commit"
+    need_agent_env
+    # Existing files at the base commit: the runner refuses edits to existing tests unless
+    # the card's modify-tests: label covers them.
+    git ls-files -z > "$AGENT_DIR/base-files" || fail_handoff "git ls-files failed"
+    # Offline caches for scripts/gen-api.sh (allowed while the run leases api/openapi.yaml).
+    /opt/sandbox/offline-caches.sh || fail_handoff "offline generator caches failed"
     log "agent: claude agent sdk (timeout ${timeout_s}s)"
-    # timeout signals the whole process group, so the CLI child dies with the runner.
-    agent_rc=0
-    timeout --kill-after=20 "$timeout_s" /opt/agent/venv/bin/python /opt/sandbox/agent_runner.py \
-      --repo "$WORK" --base-dir "$AGENT_DIR/base" --out "$AGENT_DIR/result.json" --log-dir "$OUT" \
-      || agent_rc=$?
-    case $agent_rc in
-      0) ;;
-      124|137) log "agent: wall-clock timeout"; SKIPPED+=("agent: stopped at AGENT_TIMEOUT_S") ;;
-      3) log "agent: setup failed (see above)" ;;
-      4) log "agent: coordinator unreachable (see above); the model was not called" ;;
-      *) log "agent: runner exited $agent_rc" ;;
-    esac
-    if [[ $agent_rc -ne 0 && -s "$AGENT_DIR/cli.log" ]]; then
-      log "agent: last CLI stderr lines:"; tail -n 15 "$AGENT_DIR/cli.log" >&2 || true
-    fi
+    run_agent --base-files "$AGENT_DIR/base-files"
     cd "$WORK"
     agent_args=(--agent-mode --agent-result "$AGENT_DIR/result.json")
     # No edits (committed or not) -> nothing to test; say so instead of re-running the suite.
@@ -128,7 +186,7 @@ case "$AGENT_MODE" in
       log "agent: no changes; tests not run"
     fi
     ;;
-  *) fail_handoff "unknown AGENT_MODE (agent|stub)" ;;
+  *) fail_handoff "unknown AGENT_MODE (agent|plan|triage|stub)" ;;
 esac
 
 # ------------------------------------------------------------ 4. tests (JSON reports only; logs stay in /tmp)

@@ -1,0 +1,8 @@
+{
+  "feature": "triage",
+  "input_tokens": 900,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 300,
+  "prompt_hash": "c1bf8f65b7b9e41124fed9bb29580f36",
+  "text": "{\"type\": \"chore\", \"size\": \"M\", \"risk\": \"medium\", \"areas\": [], \"priority\": \"P2\", \"severity\": \"major\", \"impact\": \"Without backups a lost database loses every role and application.\", \"route\": \"later\", \"route_reason\": \"Out of the agents' scope; a human does this.\", \"verification\": {\"status\": \"unclear\", \"evidence\": \"Backups are infrastructure, not in the listing.\", \"code_refs\": [], \"duplicate_of\": null}, \"needs_human_design\": false, \"out_of_scope\": true, \"out_of_scope_reason\": \"Needs infrastructure (Cloud Scheduler, OpenTofu).\", \"likely_paths\": [\"infra/modules/backup/\"]}"
+}

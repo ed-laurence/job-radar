@@ -5,6 +5,15 @@ there is no network MCP server and no MCP config pointing at the coordinator. Th
 in the runner process, which alone holds ``COORDINATOR_TOKEN``. Inputs are checked here first
 (oversized text is refused, never cut) and the coordinator re-checks everything.
 Stdlib only, so it is unit-tested on the host without the SDK.
+
+Plan runs (``plan_sink`` given) get ``PLAN_SPECS`` only: get_task, post_step, request_help and
+``submit_plan``, which validates the plan against the ``/out/plan.json`` contract
+(``plan_contract``) and the read-only checkout, then writes the file. It never reaches the
+coordinator; an invalid plan comes back as a tool error listing what to fix.
+
+Triage runs (``triage_sink`` given) get ``TRIAGE_SPECS``: the same read-only tools plus
+``submit_triage``, which validates against the ``/out/triage.json`` contract
+(``triage_contract``), the checkout and the open cards get_task listed, then writes the file.
 """
 
 from __future__ import annotations
@@ -13,15 +22,20 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 import agent_policy
 import coordinator_client as cc
+import plan_contract
+import triage_contract
 
 MAX_CLAIM_PATHS = 50
 MAX_HELP_CHARS = 2000
 RESULT_CHARS = 8000
 
 _STR_LIST = {"type": "array", "items": {"type": "string", "minLength": 1}}
+# What the coordinator's AgentHandoff accepts (app.domain.devboard.messages.Handoff).
+HANDOFF_STATUSES = ("done", "partial", "blocked", "failed")
 
 
 @dataclass(frozen=True)
@@ -78,22 +92,34 @@ SPECS = (
     ),
     ToolSpec(
         "post_handoff",
-        "Finish: the AGENTS.md handoff (status, summary <= 80 words, changed_paths, tests, "
-        "rubric_checked, open_questions <= 3, skipped_checks). Oversized handoffs are refused.",
+        "Finish: the AGENTS.md handoff (status, summary <= 80 words, changed_paths, tests "
+        "{passed, failed, first_failing}, rubric_checked IDs like ARCH-01, open_questions <= 3, "
+        "skipped_checks). No other keys. Oversized handoffs are refused; a refusal names the "
+        "field to fix.",
         _schema(
             {
                 "handoff": {
                     "type": "object",
                     "properties": {
-                        "status": {"type": "string"},
-                        "summary": {"type": "string"},
+                        "status": {"type": "string", "enum": list(HANDOFF_STATUSES)},
+                        "summary": {"type": "string", "minLength": 1},
                         "changed_paths": _STR_LIST,
-                        "tests": {"type": "object"},
+                        "tests": {
+                            "type": "object",
+                            "properties": {
+                                "passed": {"type": "integer", "minimum": 0},
+                                "failed": {"type": "integer", "minimum": 0},
+                                "first_failing": {"type": ["string", "null"], "maxLength": 300},
+                            },
+                            "required": ["passed", "failed"],
+                            "additionalProperties": False,
+                        },
                         "rubric_checked": _STR_LIST,
                         "open_questions": {**_STR_LIST, "maxItems": 3},
                         "skipped_checks": _STR_LIST,
                     },
-                    "required": ["status", "summary"],
+                    "required": ["status", "summary", "tests"],
+                    "additionalProperties": False,
                 }
             },
             ["handoff"],
@@ -108,6 +134,61 @@ SPECS = (
     ),
 )
 NAMES = tuple(s.name for s in SPECS)
+
+SUBMIT_PLAN = ToolSpec(
+    "submit_plan",
+    "Submit the finished plan (validated, then written to /out/plan.json; then stop). "
+    "plan = {mode: single|multi, subtasks: [{id <=64, title <=200, agent <=64, "
+    "lease_paths: [repo paths or 'dir/' prefixes] (1-50), depends_on: [subtask ids], "
+    "test_only: bool}] (1-20), acceptance_criteria: [{test_id: '<test file>::<test name>', "
+    "expectation <=1000}] (1-30), "
+    "tests_to_change: [existing test files] (<=50), budget_usd 0-20, budget_minutes 1-120, "
+    "risk: low|medium|high}. No other keys. A refusal lists what to fix.",
+    _schema({"plan": {"type": "object"}}, ["plan"]),
+)
+_BY_NAME = {s.name: s for s in SPECS}
+PLAN_SPECS = tuple(
+    SUBMIT_PLAN if name == "submit_plan" else _BY_NAME[name]
+    for name in agent_policy.PLAN_COORDINATOR_TOOLS
+)
+
+
+SUBMIT_TRIAGE = ToolSpec(
+    "submit_triage",
+    "Submit the finished triage (validated, then written to /out/triage.json; then stop). "
+    "triage = {type: feature|bug|security|performance|chore|refactor|test|docs, size: S|M|L, "
+    "risk: low|medium|high, areas: ['web'|'api'], priority: P0|P1|P2|P3, "
+    "severity: critical|major|minor|trivial, impact <=600, route: now|next|later, "
+    "route_reason <=400, needs_human_design: bool, out_of_scope: bool, "
+    "out_of_scope_reason: str (out of scope only) | null, likely_paths: [repo paths] (<=30), "
+    "verification: {status: confirmed|not_reproduced|unclear|duplicate, evidence <=1000, "
+    "code_refs: [existing repo paths] (<=20), duplicate_of: open card id (duplicate only) | "
+    "null}}. No acceptance criteria and no other keys. A refusal lists what to fix.",
+    _schema({"triage": {"type": "object"}}, ["triage"]),
+)
+TRIAGE_SPECS = tuple(
+    SUBMIT_TRIAGE if name == "submit_triage" else _BY_NAME[name]
+    for name in agent_policy.TRIAGE_COORDINATOR_TOOLS
+)
+
+
+@dataclass(frozen=True)
+class TriageSink:
+    """Where a triage run's answer goes, and the open cards a duplicate may name."""
+
+    task_id: str
+    repo: Path
+    out: Path
+    open_cards: frozenset[str]
+
+
+@dataclass(frozen=True)
+class PlanSink:
+    """Where a plan run's plan goes: the contract's task id, the checkout, ``/out/plan.json``."""
+
+    task_id: str
+    repo: Path
+    out: Path
 
 
 class ToolInputError(Exception):
@@ -150,9 +231,21 @@ class CoordinatorTools:
         client: cc.CoordinatorClient,
         tracker: agent_policy.RunTracker,
         on_step: Callable[[str, str], None] | None = None,
+        plan_sink: PlanSink | None = None,
+        triage_sink: TriageSink | None = None,
     ) -> None:
-        """``on_step(kind, text)`` runs after each step the coordinator accepted."""
+        """``on_step(kind, text)`` runs after each step the coordinator accepted. With
+        ``plan_sink`` the tools are the plan run's (``PLAN_SPECS``), with ``triage_sink`` the
+        triage run's (``TRIAGE_SPECS``)."""
         self._client, self._tracker, self._on_step = client, tracker, on_step
+        self._plan_sink = plan_sink
+        self._triage_sink = triage_sink
+
+    @property
+    def specs(self) -> tuple[ToolSpec, ...]:
+        if self._triage_sink is not None:
+            return TRIAGE_SPECS
+        return SPECS if self._plan_sink is None else PLAN_SPECS
 
     async def _io(self, fn: Callable[[], dict[str, object]]) -> dict[str, object]:
         return await asyncio.to_thread(fn)
@@ -171,7 +264,7 @@ class CoordinatorTools:
     def _handlers(
         self,
     ) -> dict[str, Callable[[Mapping[str, object]], Awaitable[dict[str, object]]]]:
-        return {
+        handlers = {
             "get_task": self._get_task,
             "claim_paths": self._claim,
             "renew_lease": self._renew,
@@ -179,7 +272,11 @@ class CoordinatorTools:
             "post_step": self._step,
             "post_handoff": self._handoff,
             "request_help": self._help,
+            "submit_plan": self._submit_plan,
+            "submit_triage": self._submit_triage,
         }
+        names = {spec.name for spec in self.specs}
+        return {name: fn for name, fn in handlers.items() if name in names}
 
     async def _get_task(self, _args: Mapping[str, object]) -> dict[str, object]:
         return await self._io(self._client.get_task)
@@ -226,3 +323,46 @@ class CoordinatorTools:
         result = await self._io(lambda: self._client.help(text))
         self._tracker.help_requested = True
         return result
+
+    async def _submit_plan(self, args: Mapping[str, object]) -> dict[str, object]:
+        sink = self._plan_sink
+        if sink is None:  # unreachable: dev runs don't expose submit_plan
+            raise ToolInputError("submit_plan is only available in plan runs")
+        if "plan" not in args:
+            raise ToolInputError("plan is required")
+        try:
+            plan = plan_contract.validate(args.get("plan"), sink.task_id, sink.repo)
+        except plan_contract.PlanError as exc:
+            problems = "; ".join(exc.errors)
+            raise ToolInputError(f"{problems}. Fix these and call submit_plan again.") from None
+        await asyncio.to_thread(plan_contract.write, plan, sink.out)
+        self._tracker.plan_submitted = True
+        subtasks = plan_contract.as_dicts(plan["subtasks"])
+        return {
+            "accepted": True,
+            "subtasks": len(subtasks),
+            "acceptance_criteria": len(cc.as_list(plan["acceptance_criteria"])),
+            "tests_to_change": len(cc.as_list(plan["tests_to_change"])),
+            "next": "The plan is written. Stop now.",
+        }
+
+    async def _submit_triage(self, args: Mapping[str, object]) -> dict[str, object]:
+        sink = self._triage_sink
+        if sink is None:  # unreachable: only triage runs expose submit_triage
+            raise ToolInputError("submit_triage is only available in triage runs")
+        if "triage" not in args:
+            raise ToolInputError("triage is required")
+        try:
+            triage = triage_contract.validate(
+                args.get("triage"), sink.task_id, sink.repo, sink.open_cards
+            )
+        except triage_contract.TriageError as exc:
+            problems = "; ".join(exc.errors)
+            raise ToolInputError(f"{problems}. Fix these and call submit_triage again.") from None
+        await asyncio.to_thread(triage_contract.write, triage, sink.out)
+        self._tracker.triage_submitted = True
+        return {
+            "accepted": True,
+            "summary": triage_contract.summary(triage),
+            "next": "The triage is written. Stop now.",
+        }

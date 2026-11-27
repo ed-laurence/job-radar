@@ -235,7 +235,16 @@ export function useApprovePlan(taskId: string) {
   const queryClient = useQueryClient();
   const { track } = useAnalytics();
   return useMutation({
-    mutationFn: ({ plan, task }: { plan: Plan; task: Task }) =>
+    mutationFn: ({
+      plan,
+      task,
+      allowTestChanges,
+    }: {
+      plan: Plan;
+      task: Task;
+      /** The maintainer allowed the plan's `tests_to_change`; the server adds the label. */
+      allowTestChanges?: boolean;
+    }) =>
       unwrap(
         client.POST("/tasks/{taskId}/plan/approve", {
           params: { path: { taskId } },
@@ -244,6 +253,7 @@ export function useApprovePlan(taskId: string) {
             task_version: task.version,
             approve_tests: true,
             approve_plan: true,
+            ...(allowTestChanges ? { allow_test_changes: true } : {}),
           },
         }),
       ),

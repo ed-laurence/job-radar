@@ -60,8 +60,8 @@ async function waitForTriage(page: Page, title: string) {
 
 /** Picks a card up with the keyboard, presses arrows, and drops it. */
 async function keyboardMove(page: Page, title: string, keys: string[]) {
-  const handle = page.getByRole("button", { name: `Move “${title}”` });
-  await handle.focus();
+  const card = page.getByRole("article", { name: title, exact: true });
+  await card.focus();
   await page.keyboard.press("Space");
   for (const key of keys) await page.keyboard.press(key);
   await page.keyboard.press("Space");
@@ -114,7 +114,7 @@ test.describe("dev board", () => {
 
     // Triage finishes: the result is shown and the card left Backlog.
     const triage = page.getByRole("region", { name: "Triage", exact: true });
-    await expect(triage.getByText("Acceptance criteria")).toBeVisible({
+    await expect(triage.getByRole("heading", { name: "Verification" })).toBeVisible({
       timeout: TRIAGE_TIMEOUT_MS,
     });
     await page.getByRole("link", { name: "← Back to the board" }).click();
@@ -135,10 +135,11 @@ test.describe("dev board", () => {
     // Drag with the pointer onto Done: never a user move. The board scrolls sideways (11 columns
     // are wider than the viewport), so Done and the card are never on screen together: hold the
     // card at the board's right edge until auto-scroll brings Done into view, as a user would.
-    const handle = page.getByRole("button", { name: `Move “${title}”` });
+    // The whole card is the drag source.
+    const card = page.getByRole("article", { name: title, exact: true });
     const target = column(page, "Done");
-    await handle.scrollIntoViewIfNeeded();
-    const start = await handle.boundingBox();
+    await card.scrollIntoViewIfNeeded();
+    const start = await card.boundingBox();
     const viewport = page.viewportSize();
     if (!start || !viewport) throw new Error("board not laid out");
     await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);

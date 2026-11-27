@@ -100,13 +100,15 @@ parameters and no body.
 ```json
 {
   "task": {"id": "uuid", "title": "str", "column": "agent_dev", "type": "feature|null",
-           "size": "S|null", "risk": "low|null", "areas": ["web"]},
+           "size": "S|null", "risk": "low|null", "areas": ["web"],
+           "labels": ["modify-tests:web/src/features/devboard/BoardMetrics.test.tsx"]},
   "run": {"id": "uuid", "kind": "dev", "agent": "frontend-engineer", "status": "running", "round": 0},
   "budget": {"usd": 1.0, "minutes": 30},
   "plan": {"mode": "single", "version": 1, "approved": true},
   "brief": "this page's part of the task body",
   "acceptance_criteria": [{"test_id": "str", "expectation": "str"}],
   "acceptance_tests": ["str"],
+  "tests_to_change": ["str"],
   "subtasks": [{"id": "s1", "title": "str", "agent": "str", "lease_paths": ["web/src/features/"],
                 "depends_on": [], "is_test_only": false}],
   "lease_paths": ["web/src/features/"],
@@ -118,10 +120,14 @@ parameters and no body.
 ```
 
 - `plan` is null before planning, and `budget.usd` is the run's budget, else the plan's.
+- `labels` lets the writer see which existing tests a `modify-tests:` label opens for edits;
+  `tests_to_change` is the approved plan's list of them.
+- Plan runs (`kind: plan`, the read-only dev-lead) may call `GET /v1/task`, `/v1/steps`,
+  `/v1/handoff` and `/v1/help`; lease claims return 403.
 - `lease_paths` holds the lease of the subtask whose `agent` matches the run's agent, or every
   subtask's paths when none matches (the lead).
 - Pages: the header repeats on every page; the brief (in chunks of about 1500 characters), the
-  criteria, tests, subtasks, lease paths and held leases fill pages in that order. Join
+  criteria, tests, tests to change, subtasks, lease paths and held leases fill pages in that order. Join
   `brief` across pages. `next_cursor` is null on the last page.
 
 ### `POST /v1/leases/claim`
