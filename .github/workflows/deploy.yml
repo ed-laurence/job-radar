@@ -1,0 +1,260 @@
+# Production deploy: push to main (or manual dispatch).
+#   check -> plan -> [environment approval] -> apply -> build + sign -> migrate -> deploy (canary)
+#   -> smoke canary -> promote -> seed -> provision-users -> smoke
+#
+# Credentials: the deploy WIF provider admits only refs/heads/main + environment prod, so every
+# job that touches GCP runs in the `prod` environment. The prod environment's required reviewer
+# approves twice: once to let `plan` read state, then again on `release` after reading the plan.
+# Identifiers come from prod-environment variables (written by infra/bootstrap) and are masked
+# in logs. The plan summary lists resource addresses and actions only, never attribute values.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  TOFU_VERSION: "1.13.9"
+  NAME_PREFIX: ${{ vars.NAME_PREFIX || 'jr' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16.6-alpine
+        env:
+          POSTGRES_USER: jobradar
+          POSTGRES_PASSWORD: jobradar-local
+          POSTGRES_DB: jobradar
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U jobradar -d jobradar"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      DATABASE_URL: postgresql://jobradar:jobradar-local@127.0.0.1:5432/jobradar
+      LLM: replay
+      GUARDS: fake
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.24"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: corepack enable && corepack prepare pnpm@9.15.9 --activate
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+      - run: |
+          bash scripts/lib/install-tools.sh --bin-dir "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+      - name: scripts/check.sh
+        env:
+          DENYLIST: ${{ secrets.JOBRADAR_DENYLIST }}
+        run: |
+          if [ -n "$DENYLIST" ]; then
+            umask 077; printf '%s\n' "$DENYLIST" > "$RUNNER_TEMP/denylist.txt"
+            export JOBRADAR_DENYLIST="$RUNNER_TEMP/denylist.txt"
+          fi
+          scripts/check.sh
+
+  plan:
+    needs: check
+    runs-on: ubuntu-24.04
+    environment: prod
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Mask identifiers
+        run: |
+          for v in "${{ vars.GCP_PROJECT_ID }}" "${{ vars.GCP_PROJECT_NUMBER }}" "${{ vars.GCP_DEPLOY_SA }}" \
+                   "${{ vars.GCP_REVIEW_SA }}" "${{ vars.TF_STATE_BUCKET }}" "${{ vars.ARTIFACT_REGISTRY }}"; do
+            [ -n "$v" ] && echo "::add-mask::$v"
+          done
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+      - name: Write tfvars (untracked, from the prod environment)
+        env:
+          PROD_TFVARS: ${{ secrets.PROD_TFVARS }}
+        run: |
+          umask 077
+          printf '%s\n' "$PROD_TFVARS" > "$RUNNER_TEMP/prod.tfvars"
+      - name: tofu plan
+        working-directory: infra/envs/prod
+        env:
+          TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+          TF_VAR_project_number: ${{ vars.GCP_PROJECT_NUMBER }}
+          TF_VAR_region: ${{ vars.GCP_REGION }}
+          TF_VAR_state_encryption_key: ${{ vars.TF_STATE_KMS_KEY }}
+          TF_VAR_deploy_service_account: ${{ vars.GCP_DEPLOY_SA }}
+          TF_VAR_review_service_account: ${{ vars.GCP_REVIEW_SA }}
+        run: |
+          tofu init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="prefix=prod"
+          tofu plan -input=false -lock-timeout=5m -var-file="$RUNNER_TEMP/prod.tfvars" -out=tfplan
+          tofu show -json tfplan | python3 -c '
+          import json, sys
+          plan = json.load(sys.stdin)
+          rows = [(",".join(r["change"]["actions"]), r["address"]) for r in plan.get("resource_changes", []) if r["change"]["actions"] != ["no-op"]]
+          print(f"### tofu plan: {len(rows)} change(s)\n")
+          print("| action | address |\n|---|---|")
+          for a, addr in rows: print(f"| {a} | `{addr}` |")
+          ' >> "$GITHUB_STEP_SUMMARY"
+      - name: Conftest policies on the plan
+        working-directory: infra/envs/prod
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/lib/install-tools.sh" --bin-dir "$HOME/.local/bin"
+          tofu show -json tfplan > "$RUNNER_TEMP/plan.json"
+          "$HOME/.local/bin/conftest" test --policy "$GITHUB_WORKSPACE/infra/policy" "$RUNNER_TEMP/plan.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: infra/envs/prod/tfplan
+          retention-days: 3
+
+  release:
+    needs: plan
+    runs-on: ubuntu-24.04
+    environment: prod
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGION: ${{ vars.GCP_REGION }}
+      REGISTRY: ${{ vars.ARTIFACT_REGISTRY }}
+    steps:
+      - name: Mask identifiers
+        run: |
+          for v in "${{ vars.GCP_PROJECT_ID }}" "${{ vars.GCP_PROJECT_NUMBER }}" "${{ vars.GCP_DEPLOY_SA }}" \
+                   "${{ vars.GCP_REVIEW_SA }}" "${{ vars.TF_STATE_BUCKET }}" "${{ vars.ARTIFACT_REGISTRY }}"; do
+            [ -n "$v" ] && echo "::add-mask::$v"
+          done
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: infra/envs/prod
+
+      - name: tofu apply (the reviewed plan)
+        working-directory: infra/envs/prod
+        env:
+          TF_VAR_state_encryption_key: ${{ vars.TF_STATE_KMS_KEY }}
+        run: |
+          tofu init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="prefix=prod"
+          tofu apply -input=false -lock-timeout=5m tfplan
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: sigstore/cosign-installer@v3
+      - name: Build, push and sign images
+        id: images
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          build() { # name context dockerfile
+            local ref="$REGISTRY/$1:${GITHUB_SHA}"
+            docker buildx build --push --provenance=true --sbom=true -t "$ref" -f "$3" "$2" \
+              --metadata-file "$RUNNER_TEMP/$1.json"
+            local digest; digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' "$RUNNER_TEMP/$1.json")"
+            cosign sign --yes "$REGISTRY/$1@$digest"
+            echo "$1=$REGISTRY/$1@$digest" >> "$GITHUB_OUTPUT"
+          }
+          build app backend backend/Dockerfile
+          build web web web/Dockerfile
+
+      - name: Migrate
+        env:
+          APP_IMAGE: ${{ steps.images.outputs.app }}
+        run: |
+          gcloud run jobs update "$NAME_PREFIX-migrate" --image "$APP_IMAGE" --region "$REGION" --quiet
+          gcloud run jobs execute "$NAME_PREFIX-migrate" --region "$REGION" --wait --quiet
+
+      - name: Deploy canary (no traffic)
+        env:
+          APP_IMAGE: ${{ steps.images.outputs.app }}
+          WEB_IMAGE: ${{ steps.images.outputs.web }}
+        run: |
+          for svc in api coordinator; do
+            gcloud run deploy "$NAME_PREFIX-$svc" --image "$APP_IMAGE" --region "$REGION" --no-traffic --tag canary --quiet
+          done
+          gcloud run deploy "$NAME_PREFIX-web" --image "$WEB_IMAGE" --region "$REGION" --no-traffic --tag canary --quiet
+
+      # Only `web` is public; `api` is IAM-only and reached through web's /api/* proxy.
+      - name: Smoke canary (through web)
+        run: |
+          web="$(gcloud run services describe "$NAME_PREFIX-web" --region "$REGION" --format=json \
+            | python3 -c 'import json,sys; print(next(t["url"] for t in json.load(sys.stdin)["status"]["traffic"] if t.get("tag")=="canary"))')"
+          echo "::add-mask::$web"
+          scripts/lib/smoke.sh "$web" "$web/api"
+
+      - name: Promote
+        run: |
+          for svc in api coordinator web; do
+            gcloud run services update-traffic "$NAME_PREFIX-$svc" --region "$REGION" --to-latest --quiet
+          done
+
+      - name: Seed demo tenant
+        env:
+          APP_IMAGE: ${{ steps.images.outputs.app }}
+        run: |
+          gcloud run jobs update "$NAME_PREFIX-seed" --image "$APP_IMAGE" --region "$REGION" --quiet
+          gcloud run jobs execute "$NAME_PREFIX-seed" --region "$REGION" --wait --quiet
+
+      - name: Provision users (no-op when they exist)
+        env:
+          APP_IMAGE: ${{ steps.images.outputs.app }}
+        run: |
+          gcloud run jobs update "$NAME_PREFIX-provision-users" --image "$APP_IMAGE" --region "$REGION" --quiet
+          gcloud run jobs execute "$NAME_PREFIX-provision-users" --region "$REGION" --wait --quiet
+
+      - name: Smoke
+        env:
+          DENYLIST: ${{ secrets.JOBRADAR_DENYLIST }}
+        run: |
+          if [ -n "$DENYLIST" ]; then
+            umask 077; printf '%s\n' "$DENYLIST" > "$RUNNER_TEMP/denylist.txt"
+            export JOBRADAR_DENYLIST="$RUNNER_TEMP/denylist.txt"
+          fi
+          web="$(gcloud run services describe "$NAME_PREFIX-web" --region "$REGION" --format='value(status.url)')"
+          echo "::add-mask::$web"
+          scripts/lib/smoke.sh "$web" "$web/api"
+          {
+            echo "### Deployed ${GITHUB_SHA::12}"
+            echo "Smoke tests passed. First deploy only: run \`scripts/bootstrap.sh --finalize --i-understand-this-creates-gcp-resources\` to apply the rulesets (infra/github-finalize) and register the webhook."
+          } >> "$GITHUB_STEP_SUMMARY"

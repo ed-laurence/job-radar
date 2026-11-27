@@ -1,0 +1,39 @@
+{
+  // Job Radar dev container: the same toolchain as CI (.github/workflows/ci.yml).
+  // Start the app with scripts/dev.sh; run the gate with scripts/check.sh.
+  "name": "job-radar",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers-extra/features/opentofu:1": {},
+    "ghcr.io/va-h/devcontainers-features/uv:1": {}
+  },
+  "containerEnv": {
+    "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0",
+    "LLM": "replay",
+    "GUARDS": "fake",
+    "REVIEW": "claude-only"
+  },
+  // ~/.config/jobradar (tfvars, denylist) is not mounted by default. To use the denylist scan
+  // inside the container, copy the file in or set JOBRADAR_DENYLIST to a path you mount yourself.
+  "postCreateCommand": "corepack enable && corepack prepare pnpm@9.15.9 --activate && bash scripts/lib/install-tools.sh --bin-dir $HOME/.local/bin",
+  "forwardPorts": [3000, 8000],
+  "portsAttributes": {
+    "3000": { "label": "web" },
+    "8000": { "label": "api" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "ms-python.python",
+        "ms-pyright.pyright",
+        "biomejs.biome",
+        "opentofu.vscode-opentofu",
+        "EditorConfig.EditorConfig"
+      ]
+    }
+  }
+}

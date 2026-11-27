@@ -1,0 +1,161 @@
+# A generic, synthetic job-search campaign plan (docs/features/campaign.md).
+# Point CAMPAIGN_CONFIG at your own plan outside the repo to use a private one.
+#
+# start:              an explicit Monday (YYYY-MM-DD). When absent, the plan starts
+#                     start_offset_days from the anchor: the seeded demo anchor if the account
+#                     was seeded, else today. Either way it snaps back to a Monday.
+# targets:            weekly targets per metric key; week_targets override them per week.
+# tasks[].weeks:      "all", a list of week numbers, or a range like "2-7".
+# tasks[].metric:     optional metric key; the task then shows progress against that target.
+name: Land the next role in 7 weeks
+start_offset_days: -37
+weeks: 7
+
+targets:
+  agency_calls: 2
+  submissions: 1
+  network_messages: 5
+  invites: 10
+  conversations: 2
+  direct_approaches: 2
+  applications: 4
+  followups: 3
+  screens: 1
+
+week_targets:
+  1:
+    agency_calls: 4
+    invites: 15
+    screens: 0
+    submissions: 0
+  2:
+    agency_calls: 3
+    screens: 0
+  6:
+    screens: 2
+  7:
+    applications: 3
+    screens: 2
+
+checkpoints:
+  - week: 2
+    text: CV and profile refreshed, ten target organisations shortlisted, recruiters briefed.
+  - week: 4
+    text: At least three conversations held and two applications submitted through a person.
+  - week: 6
+    text: Two or more screens booked. Review what is working and drop what isn't.
+  - week: 7
+    text: An offer in progress, or a clear plan for the next seven weeks.
+
+tasks:
+  - id: update-cv
+    title: Refresh your CV and profile
+    weeks: [1]
+    when: Monday
+    steps: |
+      1. Rewrite the summary in three lines: what you do, for whom, and the result.
+      2. Make every recent bullet show an outcome (a number where you have one).
+      3. Copy the summary to your professional profile so the two match.
+    links:
+      - label: CV checklist
+        url: https://guides.example.test/cv-checklist
+
+  - id: shortlist-targets
+    title: Shortlist ten target organisations
+    weeks: [1]
+    when: Tuesday
+    steps: |
+      - Pick organisations whose mission or product you'd be glad to explain to a friend.
+      - Add each one as a target so research can fill in who to approach.
+    links:
+      - label: Targets
+        url: https://app.example.test/targets
+
+  - id: agency-intros
+    title: Introduce yourself to recruiters
+    weeks: "1-2"
+    when: Wednesday
+    metric: agency_calls
+    steps: |
+      1. Choose recruiters who place your kind of role in your city.
+      2. Send a short note with your CV and the two roles you want most.
+      3. Log each call as **Recruiter call**.
+    links:
+      - label: Recruiter call script
+        url: https://guides.example.test/recruiter-call
+
+  - id: warm-intros
+    title: Ask for warm introductions
+    weeks: "2-5"
+    when: Thursday
+    metric: network_messages
+    steps: |
+      - Message people who have worked with you; ask one specific question.
+      - Mention one target organisation and ask who they know there.
+    links:
+      - label: Message templates
+        url: https://guides.example.test/warm-intro
+
+  - id: portfolio-refresh
+    title: Refresh one piece of public work
+    weeks: [2]
+    when: Friday
+    steps: |
+      Pick one project you can show and write a short case study: the problem, what you did, and
+      what changed.
+    links: []
+
+  - id: linkedin-invites
+    title: Send connection invites
+    weeks: all
+    when: Daily
+    metric: invites
+    steps: |
+      - Two invites a day to people at your target organisations, each with a short note.
+      - Log them as **LinkedIn invite**.
+    links:
+      - label: Invite note examples
+        url: https://guides.example.test/invite-notes
+
+  - id: apply-act-now
+    title: Apply to the best Act now roles
+    weeks: "2-7"
+    when: Monday and Thursday
+    metric: applications
+    steps: |
+      1. Open **Act now** and sort by score.
+      2. Apply where you show most of the must-haves; ask a contact first where you can.
+    links:
+      - label: Act now
+        url: https://app.example.test/
+
+  - id: follow-up-sweep
+    title: Follow up on applications
+    weeks: "3-7"
+    when: Wednesday
+    metric: followups
+    steps: |
+      - Follow up on every application older than five working days.
+      - A short, friendly note to the hiring manager or recruiter is enough.
+    links: []
+
+  - id: mock-interview
+    title: Practise a mock interview
+    weeks: "3-7"
+    when: Before each screen
+    metric: screens
+    steps: |
+      1. Prepare three stories: a hard problem, a conflict, and a result you're proud of.
+      2. Practise aloud with a friend or a recording and trim each to two minutes.
+    links:
+      - label: Interview story guide
+        url: https://guides.example.test/interview-stories
+
+  - id: weekly-review
+    title: Weekly review
+    weeks: all
+    when: Friday afternoon
+    steps: |
+      - Compare this week's numbers with the targets on the left.
+      - Write one thing to keep doing and one thing to change next week.
+    links: []

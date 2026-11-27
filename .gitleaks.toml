@@ -1,0 +1,61 @@
+# gitleaks config: the default rule set plus repo-specific rules.
+# Run by scripts/check.sh (gitleaks step), pre-commit and CI.
+title = "job-radar"
+
+[extend]
+useDefault = true
+
+# GCP service-account emails (identifiers are kept out of the repo; see docs/plan.md "Data exposure").
+[[rules]]
+id = "gcp-service-account-email"
+description = "GCP service account email"
+regex = '''[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com'''
+keywords = ["iam.gserviceaccount.com"]
+
+# GCP billing account ids (XXXXXX-XXXXXX-XXXXXX).
+[[rules]]
+id = "gcp-billing-account"
+description = "GCP billing account id"
+regex = '''\b[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}\b'''
+keywords = ["billing"]
+
+# Denylist placeholder. The real denylist (project id/number, owner emails and domain, bucket
+# names...) is NOT stored here, because this file is committed. Its values are scanned by
+# scripts/lib/denylist_scan.py (check.sh "denylist" step) from ~/.config/jobradar/denylist.txt
+# locally and from the JOBRADAR_DENYLIST secret in CI. CI may also generate an extra gitleaks
+# config at runtime with one rule per value; it uses this rule id, so findings stay comparable.
+[[rules]]
+id = "jobradar-denylist"
+description = "Denylisted identifier (values injected at runtime, never committed)"
+regex = '''JOBRADAR_DENYLIST_PLACEHOLDER_NEVER_MATCHES_\b'''
+keywords = ["jobradar_denylist_placeholder_never_matches_"]
+
+[allowlist]
+description = "Generated, vendored and obviously fake values"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)\.terraform/''',
+  '''(^|/)\.artifacts/''',
+  # Generated build output and tool caches, never committed (.gitignore). The built web bundle
+  # holds the public-by-design browser auth key; check.sh's denylist step still scans it.
+  '''(^|/)web/\.next(-build)?/''',
+  '''(^|/)\.hypothesis/''',
+  '''(^|/)__pycache__/''',
+  '''(^|/)\.(pytest|ruff|mypy)_cache/''',
+  '''(^|/)\.git/''',
+  '''(^|/)uv\.lock$''',
+  '''(^|/)pnpm-lock\.yaml$''',
+  '''\.terraform\.lock\.hcl$''',
+]
+# Fake values used in docs, tests and seed data.
+regexes = [
+  '''@example\.(test|com|org)''',
+  '''proj-x{4,}''',
+  '''jobradar-local''',
+  '''000000-000000-000000''',
+  # Redaction tests feed this fake AWS-style key id and expect it removed.
+  '''AKIAABCDEFGHIJKLMNOP''',
+  # Test-only signing keys are named so they can't be mistaken for real ones.
+  '''-test-key-not-secret-''',
+]

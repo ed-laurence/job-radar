@@ -1,0 +1,12 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+plan.bin
+plan.json
+crash.log
+*.tfvars
+!*.tfvars.example
+*_override.tf
+*_override.tofu
+encryption.tofu.off

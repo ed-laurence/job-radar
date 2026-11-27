@@ -1,0 +1,114 @@
+/* job-seeker's experience rows (.ent / .exprec): one row per role or project where you did it. */
+.form {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.labelRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+}
+
+.meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.chipWarn {
+  font-size: var(--font-size-xs);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-warm-soft);
+  color: var(--color-warm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.ents {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ent {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  min-width: 0;
+}
+
+.ent label {
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+}
+
+.control {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.control[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+textarea.control {
+  min-height: 3.5rem;
+  resize: vertical;
+}
+
+.linkbtn {
+  justify-self: start;
+  border: 0;
+  background: none;
+  color: var(--color-accent);
+  font: var(--font-weight-medium) var(--font-size-sm) var(--font-sans);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
+}
+
+.danger {
+  color: var(--color-danger);
+}
+
+.linkbtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.linkbtn:focus-visible,
+.control:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.problem {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-danger);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}

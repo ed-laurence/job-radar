@@ -1,0 +1,35 @@
+# Review rubric. Reviewers may only raise a BLOCKER that cites one of these IDs,
+# a spec clause, a failing test, or a concrete bug with a reproduction.
+# check: tool = enforced by a tool (reviewers ignore it); test = verified by tests; judgement = reviewer assesses
+version: 1
+items:
+  - {id: ARCH-01, check: tool,      text: "Domain imports no frameworks/adapters/DB"}
+  - {id: ARCH-02, check: judgement, text: "External systems only via ports + adapters"}
+  - {id: ARCH-03, check: judgement, text: "Routes are thin; no business rules in app.api"}
+  - {id: ARCH-04, check: judgement, text: "Every new port has a fake used by tests"}
+  - {id: ARCH-05, check: test,      text: "User-owned tables have user_id + RLS; no client-supplied user_id"}
+  - {id: ARCH-10, check: judgement, text: "Typed domain errors mapped to RFC 9457; no internals leaked"}
+  - {id: ARCH-11, check: test,      text: "Mutable resources use version + 409 on conflict"}
+  - {id: ARCH-20, check: judgement, text: "LLM calls only via adapters.llm (routing, guards, logging, budget)"}
+  - {id: ARCH-21, check: test,      text: "LLM structured output validated; retry → fallback → error"}
+  - {id: ARCH-22, check: judgement, text: "Untrusted text delimited as data, never in system prompt"}
+  - {id: ARCH-30, check: test,      text: "SSE events typed and redacted"}
+  - {id: ARCH-41, check: tool,      text: "Features don't import each other"}
+  - {id: ARCH-42, check: judgement, text: "API only via lib/api generated client"}
+  - {id: CODE-03, check: judgement, text: "No blocking I/O in async code"}
+  - {id: CODE-04, check: judgement, text: "No bare except Exception"}
+  - {id: CODE-07, check: judgement, text: "Clock/Ids ports, no direct now()/uuid4() in domain"}
+  - {id: CODE-08, check: judgement, text: "No prompts/emails/tokens in logs"}
+  - {id: CODE-23, check: test,      text: "Interactive UI accessible; DnD keyboard support"}
+  - {id: CODE-25, check: judgement, text: "No unsanitized HTML from user/LLM content"}
+  - {id: TEST-01, check: judgement, text: "New behaviour has failing-first tests at the right level"}
+  - {id: TEST-02, check: judgement, text: "Bug fix has a regression test"}
+  - {id: TEST-03, check: tool,      text: "No existing test weakened/skipped/deleted"}
+  - {id: TEST-04, check: tool,      text: "Tests hermetic: no network, no real LLM, no wall clock"}
+  - {id: SEC-01,  check: test,      text: "Auth + exact allowlist on every protected route"}
+  - {id: SEC-02,  check: test,      text: "Role checks on maintainer-only routes"}
+  - {id: SEC-04,  check: judgement, text: "Untrusted input guarded before LLM; output guarded; fail closed"}
+  - {id: SEC-06,  check: test,      text: "User-facing payloads pass redaction filter"}
+  - {id: SEC-07,  check: test,      text: "Errors/healthz expose no internals"}
+  - {id: SEC-08,  check: judgement, text: "Rate limits on new routes"}
+  - {id: SEC-10,  check: judgement, text: "No SSRF; outbound hosts allowlisted"}

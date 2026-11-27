@@ -1,0 +1,90 @@
+{
+  "slot": "leadership",
+  "filename": "alex-example-leadership-cv.pdf",
+  "name": "Alex Example",
+  "headline": "Head of Data and AI | Data Platform and AI Engineering Leader",
+  "contact": "Melbourne VIC | alex@example.test | people.example.test/alex-example",
+  "sections": [
+    {
+      "title": "Summary",
+      "paragraphs": [
+        "Data and AI leader with fifteen years of technical delivery across payments, research, online learning and analytics. Has run data functions and engineering teams of up to six, set data strategy with executives, and still reviews code and designs. Recent focus: taking LLM features from prototype to measured, governed production use."
+      ]
+    },
+    {
+      "title": "Skills",
+      "items": [
+        "Leadership: data strategy, team building and hiring, stakeholder management, delivery planning, budgeting",
+        "Technical: generative AI (LLMs, retrieval, agents), MLOps and evaluation, cloud data platforms on GCP and AWS",
+        "Domains: online learning, logistics analytics, payments, professional services"
+      ]
+    },
+    {
+      "title": "Experience",
+      "roles": [
+        {
+          "title": "Principal Engineer",
+          "employer": "Saltbush Digital Services",
+          "location": "Melbourne VIC",
+          "dates": "Mar 2024 - Present",
+          "blurb": "Consultancy building AI features for mid-sized retailers and insurers.",
+          "bullets": [
+            "Lead technical discovery and delivery for client AI engagements, from use-case selection and risk review to production rollout.",
+            "Introduced evaluation gates and model-routing guidelines that let clients compare cost and quality before committing to a model."
+          ]
+        },
+        {
+          "title": "Engineering Manager",
+          "employer": "Tasman Analytics Services",
+          "location": "Melbourne VIC",
+          "dates": "Jan 2022 - Feb 2024",
+          "blurb": "Analytics platform provider for logistics companies.",
+          "bullets": [
+            "Managed six engineers through a year-long move from batch to streaming, keeping customer reporting running throughout.",
+            "Ran quarterly planning with product and customer success, and grew the team through two hires and one internal promotion.",
+            "Made data quality visible to customers with published freshness and completeness targets."
+          ]
+        },
+        {
+          "title": "Head of Data",
+          "employer": "Sapphire Learning",
+          "location": "Melbourne VIC",
+          "dates": "Feb 2019 - Dec 2021",
+          "blurb": "Venture-backed online learning provider.",
+          "bullets": [
+            "Set the data strategy and roadmap with the executive team, and built a team of three across engineering and analytics.",
+            "Replaced ad hoc spreadsheet reporting with a governed metrics layer used in board reporting.",
+            "Led the investigation into inflated engagement metrics with the leadership team and put lasting controls in place."
+          ]
+        },
+        {
+          "title": "Analytics Lead",
+          "employer": "Lumen Partners Institute",
+          "location": "Melbourne VIC",
+          "dates": "Apr 2016 - Jan 2019",
+          "blurb": "Research and advisory organisation.",
+          "bullets": [
+            "Led a small analytics group and set its priorities with research directors.",
+            "Automated document triage with a classifier, freeing analysts for higher-value work."
+          ]
+        },
+        {
+          "title": "Earlier career",
+          "employer": "Orbital Payments Co and Ridgeline Control Systems",
+          "location": "Victoria",
+          "dates": "Jan 2009 - Mar 2016",
+          "bullets": [
+            "Data engineering for a payments processor, and control software for industrial automation equipment."
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Education",
+      "items": [
+        "Master of Data Science, an Australian university",
+        "Bachelor of Engineering (Mechatronics), an Australian university"
+      ]
+    }
+  ]
+}

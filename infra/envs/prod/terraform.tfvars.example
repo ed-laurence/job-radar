@@ -1,0 +1,19 @@
+# Fake placeholders only. Real values: untracked ~/.config/jobradar/prod.tfvars
+# (local) or GitHub prod-environment variables (CI). Never commit *.tfvars.
+
+project_id     = "proj-xxxx-0000"
+project_number = "000000000000"
+region         = "australia-southeast1"
+org_id         = null # "000000000000" when an Organization exists
+name_prefix    = "jr"
+
+state_encryption_key   = "projects/proj-xxxx-0000/locations/australia-southeast1/keyRings/tofu-state/cryptoKeys/state"
+deploy_service_account = "gh-deploy@proj-xxxx-0000.iam.gserviceaccount.com"
+review_service_account = "gh-security-review@proj-xxxx-0000.iam.gserviceaccount.com"
+notification_channels  = ["projects/proj-xxxx-0000/notificationChannels/0000000000000000000"]
+
+uploads_bucket_name   = "proj-xxxx-0000-uploads"
+artifacts_bucket_name = "proj-xxxx-0000-artifacts"
+
+blocking_function_uri = null # "https://auth-blocking-xxxx.a.run.app" after CI deploys it
+redteam_enabled       = false

@@ -1,0 +1,3 @@
+# Top-level pins for the writer image agent venv. Compile with:
+#   uv pip compile agent-requirements.in --generate-hashes --python-version 3.12 \n#     --python-platform x86_64-unknown-linux-gnu -o agent-requirements.txt
+claude-agent-sdk==0.2.189

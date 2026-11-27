@@ -1,0 +1,56 @@
+# Lint rules for api/openapi.yaml. Run:
+#   npx -y @stoplight/spectral-cli lint api/openapi.yaml --ruleset api/.spectral.yaml
+extends: ["spectral:oas"]
+
+rules:
+  # Every operation has an operationId (codegen names come from it).
+  operation-operationId: error
+  operation-operationId-unique: error
+
+  jr-operation-has-error-response:
+    description: Every operation documents at least one 4xx response.
+    severity: error
+    given: "$.paths[*][get,put,post,patch,delete]"
+    then:
+      field: responses
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          not:
+            propertyNames:
+              not:
+                pattern: "^4[0-9]{2}$"
+
+  jr-errors-are-problem-json:
+    description: Every 4xx/5xx response is RFC 9457 application/problem+json.
+    message: "{{path}} must use application/problem+json"
+    severity: error
+    given: "$.paths[*][get,put,post,patch,delete].responses[?(@property.match(/^[45]/))]"
+    then:
+      field: content.application/problem+json
+      function: truthy
+
+  jr-string-max-length:
+    description: Every string schema declares maxLength.
+    message: "String schema needs maxLength ({{path}})"
+    severity: error
+    resolved: false
+    given: "$..[?(@ && @.type === 'string')]"
+    then:
+      field: maxLength
+      function: truthy
+
+  jr-request-body-closed:
+    description: Request body object schemas set additionalProperties false.
+    severity: error
+    given: "$.paths[*][post,put,patch].requestBody.content.application/json.schema"
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          required: [additionalProperties]
+          properties:
+            additionalProperties:
+              const: false

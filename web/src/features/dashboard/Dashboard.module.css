@@ -1,0 +1,914 @@
+/* The main page, ported from job-seeker's styles.css: a campaign column beside the main column on
+   wide screens (>= 1180px, mirrored in useWide.ts), one column with a Campaign tab below that. */
+
+.page {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  max-width: var(--content-narrow);
+  width: 100%;
+  margin: 0 auto;
+}
+
+.maincol {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  min-width: 0;
+  align-content: start;
+}
+
+.campcol {
+  display: none;
+}
+
+@media (min-width: 1180px) {
+  .layout {
+    max-width: var(--content-max);
+    /* --campaign-split (percent) comes from the splitter; the bar sits in its own column. */
+    grid-template-columns:
+      minmax(320px, calc(var(--campaign-split, 41.7) * 1%))
+      var(--space-4)
+      minmax(0, 1fr);
+    align-items: start;
+    column-gap: var(--space-2);
+    row-gap: var(--space-6);
+  }
+
+  .splitter {
+    display: block;
+    align-self: stretch;
+    width: var(--space-4);
+    min-height: 120px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background:
+      linear-gradient(var(--color-border), var(--color-border)) center / 2px 100% no-repeat;
+    cursor: col-resize;
+    touch-action: none;
+    position: sticky;
+    top: 72px;
+    height: calc(100vh - 88px);
+  }
+
+  .splitter:hover,
+  .splitter:active {
+    background-image: linear-gradient(var(--color-accent), var(--color-accent));
+    background-size: 3px 100%;
+  }
+
+  .splitter:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  .campcol {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+    position: sticky;
+    top: 72px;
+    max-height: calc(100vh - 88px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 6px var(--space-4) 0;
+    scrollbar-gutter: stable;
+  }
+}
+
+.campaign {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+/* ---------------------------------------------------------------- shared bits */
+
+.sub {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  margin: 0;
+  font-weight: 400;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.notice {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-success);
+}
+
+.notice:empty {
+  display: none;
+}
+
+.alert {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border-left: 4px solid var(--color-danger);
+  background: var(--color-danger-surface);
+  font-size: var(--font-size-base);
+}
+
+.button,
+.primary {
+  font: 500 var(--font-size-sm) var(--font-sans);
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.button:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+
+.primary:hover {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+  color: var(--color-accent-contrast);
+}
+
+.small {
+  padding: 3px 9px;
+  font-size: var(--font-size-xs);
+}
+
+.button:disabled,
+.primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.linkbtn {
+  border: 0;
+  background: none;
+  color: var(--color-accent);
+  font: 500 var(--font-size-sm) var(--font-sans);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
+}
+
+.select {
+  font: var(--font-size-sm) var(--font-sans);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+/* Panels in the campaign column and tab panels (job-seeker's .card.fbx) */
+.panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.panel p {
+  margin: 0;
+}
+
+.panelHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.caps {
+  font: 600 var(--font-size-2xs) var(--font-sans);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.caps .sub {
+  font-size: var(--font-size-2xs);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.btns {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+.empty {
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 28px 20px;
+  color: var(--color-text-muted);
+  display: grid;
+  gap: 6px;
+}
+
+.empty b {
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: 1.125rem;
+}
+
+.empty p {
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------- alerts banner */
+
+.alerts {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.alerts[hidden] {
+  display: none;
+}
+
+.alertLine {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  border-left: 4px solid var(--color-warm);
+  background: var(--color-warm-soft);
+  color: var(--color-text);
+}
+
+.alertLine b {
+  margin-right: 6px;
+  color: var(--color-warm);
+}
+
+.alertBad {
+  background: var(--color-hot-soft);
+  border-color: var(--color-danger);
+}
+
+.alertBad b {
+  color: var(--color-danger);
+}
+
+/* ---------------------------------------------------------------- KPI tiles */
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  background: var(--color-border);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.kpi {
+  background: var(--color-surface);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+  gap: 2px;
+  min-width: 0;
+}
+
+.kpi dt {
+  font-size: var(--font-size-2xs);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.kpi dd {
+  margin: 0;
+  font: 600 var(--font-size-xl) / 1.1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.kpiAlert dd {
+  color: var(--color-accent);
+}
+
+@media (max-width: 560px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------------------------------------------------------------- tabs and action row */
+
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  background: var(--color-surface-muted);
+  padding: 4px;
+  border-radius: 9px;
+  border: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.tab {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: 500 var(--font-size-sm) var(--font-sans);
+  padding: 6px 11px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--color-text);
+}
+
+.tab[aria-pressed="true"] {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+}
+
+.tabCount {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  margin-left: 5px;
+}
+
+.archive {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.archive input {
+  width: 4.5em;
+  font-size: var(--font-size-sm);
+}
+
+/* ---------------------------------------------------------------- role cards */
+
+.list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  scroll-margin-top: 16px;
+}
+
+.fresh {
+  border-color: var(--color-hot);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card {
+    transition:
+      border-color 0.2s,
+      box-shadow 0.2s;
+  }
+}
+
+.cardTop {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.score {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  display: grid;
+  place-items: center;
+  font: 600 1.125rem var(--font-mono);
+}
+
+.scoreHigh {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.scoreMid {
+  background: var(--color-warm-soft);
+  color: var(--color-warm);
+}
+
+.scoreLow,
+.scoreNone {
+  background: var(--color-cold-soft);
+  color: var(--color-cold);
+}
+
+.cardTitle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
+  min-width: 0;
+}
+
+.cardTitle h3 {
+  font: 600 var(--font-size-lg) / 1.3 var(--font-sans);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.cardTitle h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.cardTitle h3 a:hover {
+  text-decoration: underline;
+}
+
+.company {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-base);
+  margin: 0;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.chip {
+  font-size: var(--font-size-xs);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chipMission {
+  background: var(--color-mission-soft);
+  color: var(--color-mission);
+  font-weight: 500;
+}
+
+.chipStatus {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+.chipWarn {
+  background: var(--color-warm-soft);
+  color: var(--color-warm);
+  font-weight: 500;
+}
+
+.chipDue {
+  background: var(--color-hot-soft);
+  color: var(--color-hot);
+  font-weight: 500;
+}
+
+.clock {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 500 var(--font-size-xs) var(--font-mono);
+  color: var(--color-text-muted);
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+.track {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--color-surface-muted);
+  overflow: hidden;
+  max-width: 220px;
+  min-width: 80px;
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+}
+
+.hot {
+  color: var(--color-hot);
+}
+
+.hot .fill {
+  background: var(--color-hot);
+}
+
+.warm {
+  color: var(--color-warm);
+}
+
+.warm .fill {
+  background: var(--color-warm);
+}
+
+.why {
+  margin: 0;
+  font-size: var(--font-size-base);
+  max-width: 68ch;
+}
+
+.cardActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.disclosure {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-2);
+}
+
+.disclosure > summary {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-accent);
+  list-style: none;
+}
+
+.disclosure > summary::-webkit-details-marker,
+.task > details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure > summary::before,
+.task > details > summary::before {
+  content: "▸ ";
+}
+
+.disclosure[open] > summary::before,
+.task > details[open] > summary::before {
+  content: "▾ ";
+}
+
+.disclosureBody {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: 10px;
+  font-size: var(--font-size-base);
+}
+
+.disclosureBody p {
+  margin: 0;
+  white-space: pre-wrap;
+  max-width: 68ch;
+}
+
+/* ---------------------------------------------------------------- campaign column */
+
+.planHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.bars {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.barrow {
+  display: grid;
+  grid-template-columns: minmax(120px, 240px) minmax(0, 1fr) 3.5em;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--font-size-sm);
+}
+
+.barrow dt {
+  min-width: 0;
+}
+
+.barrow dd {
+  margin: 0;
+  display: contents;
+}
+
+.barTrack {
+  height: 10px;
+  background: var(--color-surface-muted);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.barFill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 5px;
+}
+
+.barValue {
+  font: 600 var(--font-size-sm) var(--font-mono);
+  text-align: right;
+}
+
+@media (max-width: 520px) {
+  .barrow {
+    grid-template-columns: minmax(0, 1fr) 3.5em;
+  }
+
+  .barTrack {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+.checkpoint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-warm);
+}
+
+.tasks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.task {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-2) 0;
+}
+
+.task:first-child {
+  border-top: 0;
+}
+
+.task > input {
+  margin-top: 5px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-accent);
+}
+
+.task > details {
+  min-width: 0;
+}
+
+.task > details > summary {
+  font-size: var(--font-size-base);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  list-style: none;
+}
+
+.taskTitle {
+  font-weight: 600;
+}
+
+.taskDone .taskTitle {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.taskBody {
+  display: grid;
+  gap: 10px;
+  padding: var(--space-2) 0 4px;
+  font-size: var(--font-size-base);
+}
+
+.taskBody ol,
+.taskBody ul {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 2px;
+}
+
+.logform {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: 10px 14px;
+}
+
+.logform label {
+  display: grid;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.logform input,
+.logform select {
+  font: var(--font-size-base) var(--font-sans);
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  width: 100%;
+  min-width: 0;
+}
+
+.formActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ---------------------------------------------------------------- Outreach and Feedback tabs */
+
+.rows {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+  font-size: var(--font-size-base);
+}
+
+.rows li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border);
+}
+
+.rows li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.lessons {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+  font-size: var(--font-size-base);
+}
+
+/* ---------------------------------------------------------------- job analytics */
+
+.analyticsBox {
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: var(--space-2);
+}
+
+.analyticsBox[open] > summary {
+  margin-bottom: var(--space-3);
+}
+
+.rates {
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+}
+
+.header p {
+  margin: var(--space-1) 0 0;
+}
+
+.analytics {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.header h2 {
+  margin: 0;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-muted);
+}
+
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr));
+  gap: var(--space-4);
+}
+
+/* A role a refresh added (a scheduled scan): job-seeker's slide-in, plus a brief accent glow.
+   Motion only when the user hasn't asked for less; otherwise the card just appears. */
+@media (prefers-reduced-motion: no-preference) {
+  .arrived {
+    animation:
+      arrive-slide 450ms ease-out,
+      arrive-glow 2400ms ease-out;
+  }
+}
+
+@keyframes arrive-slide {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes arrive-glow {
+  from {
+    box-shadow: 0 0 0 3px var(--color-accent-soft);
+  }
+  to {
+    box-shadow: none;
+  }
+}

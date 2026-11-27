@@ -1,0 +1,8 @@
+{
+  "feature": "digest",
+  "input_tokens": 400,
+  "model": "openai/gpt-oss-120b-maas",
+  "output_tokens": 120,
+  "prompt_hash": "2a5f0a26c433c63323cfdea0386035df",
+  "text": "{\"headline\": \"3 new cards and 5 moves in the last day.\", \"bullets\": [\"2 agent runs succeeded and 1 failed.\", \"2 cards wait in Triaged, 1 in Backlog.\"]}"
+}

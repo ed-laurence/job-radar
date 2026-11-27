@@ -1,0 +1,68 @@
+{
+  "anchor": "2026-11-25T00:00:00Z",
+  "files": {
+    "campaign_activity.jsonl": {
+      "count": 44,
+      "sha256": "6a7f69764a60d360de047cee8c42ec725919794be448229815bc3cb7409e976a"
+    },
+    "campaign_tasks_done.jsonl": {
+      "count": 8,
+      "sha256": "38369bccd9bfd4da0afba91559b3e596bd689373ee1d286acb28717c6fee6bbb"
+    },
+    "chats.jsonl": {
+      "count": 62,
+      "sha256": "0fbb9c1bd319fec847d8e2f56286659e4741b6114618cd559f2df750a7462ad0"
+    },
+    "contacts.jsonl": {
+      "count": 579,
+      "sha256": "db42a5fbd07eefdaeb05507124c7551c92db1825a7bba59cb3cf3ffaadd7a458"
+    },
+    "experience.jsonl": {
+      "count": 13,
+      "sha256": "5b10e5d13bd290166f61083b8182754ee407cbee1ca927438cc559b0c75a5d64"
+    },
+    "experience_entries.jsonl": {
+      "count": 25,
+      "sha256": "8edf3c401bb5e388a3790338ba6e9ba72b6ba0597c56632d0ee0c0418db7da2d"
+    },
+    "followups.jsonl": {
+      "count": 30,
+      "sha256": "1d0b6d8a4a51c1278af6d9221b172dce8a88746ac72e8f88f726a2e6c868e227"
+    },
+    "llm_calls.jsonl": {
+      "count": 8035,
+      "sha256": "2f50a2144e06a8d69b437f0a0cba504ec9862693aa08e83abaac77a69711957b"
+    },
+    "persona.jsonl": {
+      "count": 1,
+      "sha256": "c6cb8ce477dd866706b6ba1fcfae96d2512efb005bdb23f41d504842fad2005f"
+    },
+    "rejections.jsonl": {
+      "count": 13,
+      "sha256": "5c5b06bc1c8be816083ebc4d001a790a98624ca5d884bf3cf84922cd232a87f3"
+    },
+    "role_events.jsonl": {
+      "count": 1332,
+      "sha256": "e7d809f47d068ec6051e379fa4aec069885a15e031e8c1745e02e5ef1d603e93"
+    },
+    "role_recruiters.jsonl": {
+      "count": 17,
+      "sha256": "c3edbd5a5e0be2481cfe33d7748dfd8e1641f3a4a95c61170a896f994b07ac5d"
+    },
+    "roles.jsonl": {
+      "count": 1519,
+      "sha256": "edc3ab145064b85834d0a865f62caee758f01bf8ca1da97db90d68b96e4527bf"
+    },
+    "targets.jsonl": {
+      "count": 60,
+      "sha256": "88a13abca0ad2c4fb4e831db54ecdfe4760a9d07c787ebccfb5be41d1dccfd76"
+    },
+    "users.jsonl": {
+      "count": 2,
+      "sha256": "54b7d5d03a2b90a15d606838b796511720d970486bb188148ca239fd93f3c228"
+    }
+  },
+  "real_companies": false,
+  "schema_version": 1,
+  "synthetic": true
+}

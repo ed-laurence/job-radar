@@ -1,0 +1,16 @@
+{
+  "feature": "research",
+  "input_tokens": 530,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 58,
+  "prompt_hash": "97271fee86f27ccfe118eddb3787c6e7",
+  "server_uses": [],
+  "text": "Next, any roles the user has tracked there.",
+  "tool_call": {
+    "arguments": {
+      "topic": "roles"
+    },
+    "id": "toolu_replay_02",
+    "name": "lookup_known_data"
+  }
+}

@@ -1,0 +1,22 @@
+# Fake placeholders only. bootstrap.sh writes the real values to the untracked
+# ~/.config/jobradar/prod.tfvars. Never commit a real tfvars file.
+
+project_id      = "proj-xxxx-0000"
+project_name    = "example project"
+org_id          = null # e.g. "000000000000" when an Organization exists
+folder_id       = null
+billing_account = "000000-000000-000000"
+region          = "australia-southeast1"
+
+state_bucket_name = "proj-xxxx-0000-tofu-state"
+state_key_users   = ["user:owner@example.test"]
+
+budget_amount   = 50
+budget_currency = null
+alert_email     = "alerts@example.test"
+
+enable_github   = false # GCP-only stage; the full bootstrap sets true (ADR-0008)
+github_owner    = "example-owner"
+github_owner_id = "1000" # numeric GitHub id of github_owner
+github_repo     = "example-repo"
+github_reviewer = null # required when enable_github = true, e.g. "example-owner"

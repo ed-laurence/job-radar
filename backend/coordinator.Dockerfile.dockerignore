@@ -1,0 +1,8 @@
+# Build context allowlist for backend/coordinator.Dockerfile (context = backend/). BuildKit uses
+# this file instead of a .dockerignore. Nothing else (.env, .venv, tests, fixtures, caches) can
+# reach the image.
+*
+!pyproject.toml
+!uv.lock
+!src/
+src/**/__pycache__

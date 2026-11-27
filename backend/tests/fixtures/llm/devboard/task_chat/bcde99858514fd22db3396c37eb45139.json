@@ -1,0 +1,14 @@
+{
+  "feature": "task_chat",
+  "input_tokens": 800,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 120,
+  "prompt_hash": "bcde99858514fd22db3396c37eb45139",
+  "server_uses": [],
+  "text": "Reading the card first.",
+  "tool_call": {
+    "arguments": {},
+    "id": "toolu_1",
+    "name": "get_task"
+  }
+}

@@ -1,0 +1,84 @@
+# Opens the PR for a dev-board agent branch after the Publisher's `push` job pushes it.
+# The PR body is built from STRUCTURED FIELDS ONLY (task id, card link, the signer's verdict
+# summary), each validated against a strict pattern. No agent free text reaches the PR.
+# Uses GITHUB_TOKEN, so the PR itself triggers no workflows; ci.yml and security-review.yml
+# already run from the push and attach their checks to the head SHA.
+#
+# Expected commit trailers on the branch head (written by the trusted `push` job):
+#   Jobradar-Task: task-<uuid or 8+ hex>
+#   Jobradar-Verdict: pass
+#   Jobradar-Tests: <passed>/<total>
+#   Jobradar-Diff-Lines: <n>
+name: agent-pr
+
+on:
+  push:
+    branches: ["agent/**"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: agent-pr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build PR fields (validated, structured only)
+        id: fields
+        env:
+          BRANCH: ${{ github.ref_name }}
+          APP_BASE_URL: ${{ vars.APP_BASE_URL }}
+        run: |
+          set -euo pipefail
+          trailer() { git log -1 --format="%(trailers:key=$1,valueonly,only)" HEAD | head -1 | tr -d '\r'; }
+          task="$(trailer Jobradar-Task)"; verdict="$(trailer Jobradar-Verdict)"
+          tests="$(trailer Jobradar-Tests)"; lines="$(trailer Jobradar-Diff-Lines)"
+          [[ "$task" =~ ^task-[0-9a-f-]{8,36}$ ]] || { echo "::error::missing or invalid Jobradar-Task trailer"; exit 1; }
+          [[ "$BRANCH" == "agent/$task" ]] || { echo "::error::branch does not match task id"; exit 1; }
+          [[ "$verdict" == "pass" ]] || { echo "::error::signer verdict is not pass"; exit 1; }
+          [[ "$tests" =~ ^[0-9]{1,5}/[0-9]{1,5}$ ]] || tests="unknown"
+          [[ "$lines" =~ ^[0-9]{1,5}$ ]] || lines="unknown"
+          card="(card link unavailable)"
+          [[ "$APP_BASE_URL" =~ ^https://[A-Za-z0-9.-]+$ ]] && card="$APP_BASE_URL/board/tasks/$task"
+          {
+            echo "title=agent: $task"
+            echo "body<<JR_EOF"
+            echo "Automated PR from the Job Radar dev board."
+            echo
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| task | \`$task\` |"
+            echo "| card | $card |"
+            echo "| signer verdict | $verdict |"
+            echo "| acceptance tests | $tests |"
+            echo "| changed lines | $lines |"
+            echo
+            echo "Required checks: \`ci / check\`, \`security-review\`. Needs one human approval."
+            echo "JR_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open PR (idempotent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+          TITLE: ${{ steps.fields.outputs.title }}
+          BODY: ${{ steps.fields.outputs.body }}
+        run: |
+          set -euo pipefail
+          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [[ -n "$existing" ]]; then
+            gh pr edit "$existing" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+            echo "updated PR #$existing"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "$TITLE" --body "$BODY"
+          fi

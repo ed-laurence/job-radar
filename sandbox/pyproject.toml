@@ -1,0 +1,26 @@
+# Test and lint config for sandbox/ (llm-proxy and the writer helpers; stdlib only).
+#   cd sandbox && uv run --no-project --with pytest==8.4.2 pytest -q
+#   uv run --no-project --with ruff==0.17.4 ruff check .
+#   uv run --no-project --with pyright==1.1.414 --with pytest==8.4.2 pyright
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+pythonpath = ["llm-proxy", "writer"]
+addopts = "-ra --strict-markers -p no:cacheprovider -p pytester"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+extraPaths = ["llm-proxy", "writer", "tests/unit"]
+include = ["llm-proxy", "writer", "tests"]
+reportMissingTypeStubs = false
+reportUnknownMemberType = false

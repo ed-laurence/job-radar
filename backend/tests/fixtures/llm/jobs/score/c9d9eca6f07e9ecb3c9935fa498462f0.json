@@ -1,0 +1,8 @@
+{
+  "feature": "score",
+  "input_tokens": 498,
+  "model": "claude-haiku-5-5",
+  "output_tokens": 200,
+  "prompt_hash": "c9d9eca6f07e9ecb3c9935fa498462f0",
+  "text": "{\"track\": \"contract\", \"mission\": null, \"breakdown\": {\"skills\": 40, \"track_pay\": 20, \"location\": 15, \"freshness\": 0}, \"relevant\": true, \"reason\": \"Hands-on data engineering role in Melbourne, hybrid.\", \"risks\": [\"Hybrid days not stated.\"], \"work_mode\": \"hybrid\"}"
+}

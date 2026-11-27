@@ -1,0 +1,23 @@
+{
+  "feature": "task_chat",
+  "input_tokens": 800,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 120,
+  "prompt_hash": "85052f52acbde3705ecef7eb3ebbec1e",
+  "server_uses": [],
+  "text": "Proposing written criteria.",
+  "tool_call": {
+    "arguments": {
+      "acceptance_criteria": [
+        "Searching by part of a name returns only the matching contacts",
+        "Results are ordered by last contact date, newest first",
+        "An empty search returns every contact"
+      ],
+      "description": null,
+      "reason": "The card has no written acceptance criteria an agent could test.",
+      "title": null
+    },
+    "id": "toolu_2",
+    "name": "propose_task_edit"
+  }
+}

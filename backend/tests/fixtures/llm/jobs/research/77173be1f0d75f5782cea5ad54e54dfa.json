@@ -1,0 +1,16 @@
+{
+  "feature": "research",
+  "input_tokens": 412,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 64,
+  "prompt_hash": "77173be1f0d75f5782cea5ad54e54dfa",
+  "server_uses": [],
+  "text": "Start with what's already on file about the company.",
+  "tool_call": {
+    "arguments": {
+      "topic": "target"
+    },
+    "id": "toolu_replay_01",
+    "name": "lookup_known_data"
+  }
+}

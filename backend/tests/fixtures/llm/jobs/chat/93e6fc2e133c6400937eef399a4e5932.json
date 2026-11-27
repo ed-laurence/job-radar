@@ -1,0 +1,8 @@
+{
+  "feature": "chat",
+  "input_tokens": 311,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 200,
+  "prompt_hash": "93e6fc2e133c6400937eef399a4e5932",
+  "text": "Lead with your pipeline work in Python and SQL, since the ad asks for both. Keep the cover note to three short paragraphs."
+}

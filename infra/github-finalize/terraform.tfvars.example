@@ -1,0 +1,3 @@
+# Fake placeholders only.
+github_owner = "example-owner"
+github_repo  = "example-repo"

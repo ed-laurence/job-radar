@@ -1,0 +1,8 @@
+{
+  "feature": "evidence",
+  "input_tokens": 412,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 236,
+  "prompt_hash": "890169b5a5becb8c2d423dec645838ae",
+  "text": "{\"must_haves\": [{\"requirement\": \"Observability at scale\", \"match\": \"shown\", \"quote\": \"Rolled out OpenTelemetry tracing across 40 services.\", \"source\": \"records\", \"record_id\": null, \"why\": \"Tracing across 40 services is observability at scale.\"}, {\"requirement\": \"Terraform\", \"match\": \"shown\", \"quote\": \"Managed all infrastructure as code with Terraform.\", \"source\": \"cv_technical\", \"record_id\": null, \"why\": \"Infrastructure as code during the cloud move.\"}, {\"requirement\": \"On-call leadership\", \"match\": \"missing\", \"quote\": \"\", \"source\": \"none\", \"record_id\": null, \"why\": \"Nothing about running an on-call rota.\"}], \"ad_team_size\": 6, \"largest_team_led\": 4}"
+}

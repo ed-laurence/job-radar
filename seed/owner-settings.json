@@ -1,0 +1,17 @@
+{
+  "profile": {
+    "skills": [
+      "dbt tests: generic and singular tests plus source freshness checks gating every deploy of the streaming marts at Tasman Analytics Services (2023)",
+      "Kubernetes: ran nightly batch scoring jobs on GKE with Helm charts and autoscaled node pools for a retail client at Saltbush Digital Services (2025)",
+      "LangGraph: built a multi-step claims agent prototype as a state graph with human approval steps and retries at Saltbush Digital Services (2025)",
+      "Mentoring program: set up and ran a six-month mentoring program pairing junior and senior engineers at Tasman Analytics Services (2023)",
+      "OpenTelemetry: tracing and latency dashboards for the FastAPI services in the Saltbush delivery template (2024)",
+      "Grafana: on-call dashboards and alerting rules for the streaming ingestion at Tasman Analytics Services (2022)",
+      "Kafka: built a Kafka Connect pipeline streaming card authorisation events into the fraud-signal jobs at Orbital Payments Co (2015)",
+      "Rust: rewrote a slow log-parsing step as a Rust extension called from PySpark at Sapphire Learning (2021)",
+      "Snowflake: moved a client's reporting views from Redshift to Snowflake during a short advisory engagement at Saltbush Digital Services (2024)",
+      "Security reviews: led an ISO 27001 readiness review of the data platform and its access controls at Sapphire Learning (2020)",
+      "Teaching: guest lectures on applied machine learning for a data science course at an Australian university (2019)"
+    ]
+  }
+}

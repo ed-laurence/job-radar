@@ -1,0 +1,26 @@
+# Build context allowlist for sandbox/writer/Dockerfile (context = repo root). BuildKit uses
+# this file instead of a root .dockerignore. Nothing else (.env, ~/.config copies, seed/local,
+# node_modules, .venv, .git) can reach the image.
+*
+!backend/pyproject.toml
+!backend/uv.lock
+!web/package.json
+!web/pnpm-lock.yaml
+!sandbox/writer/agent-requirements.txt
+!sandbox/writer/entrypoint.sh
+!sandbox/writer/handoff.py
+!sandbox/writer/pytest_report.py
+!sandbox/writer/agent_runner.py
+!sandbox/writer/agent_policy.py
+!sandbox/writer/agent_prompt.py
+!sandbox/writer/coordinator_client.py
+!sandbox/writer/coordinator_tools.py
+!sandbox/writer/agent_sdk.py
+# Defence in depth, in case an allowlist line above is ever widened.
+**/.env
+**/.env.*
+**/*.env
+**/.config
+**/node_modules
+**/.venv
+seed/local

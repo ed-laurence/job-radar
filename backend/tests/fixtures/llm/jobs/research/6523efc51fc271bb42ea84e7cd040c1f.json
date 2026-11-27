@@ -1,0 +1,8 @@
+{
+  "feature": "research",
+  "input_tokens": 640,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 180,
+  "prompt_hash": "6523efc51fc271bb42ea84e7cd040c1f",
+  "text": "{\"summary\": \"Acme Pty Ltd is on file as a lane A target because of its strong data team. No roles there have been tracked yet, and no contacts are on file, so the next step is finding someone to approach. Nothing public was searched: web search is off.\", \"findings\": [\"The user's notes cite a strong data team.\", \"No tracked roles at the company yet.\"], \"sources\": []}"
+}

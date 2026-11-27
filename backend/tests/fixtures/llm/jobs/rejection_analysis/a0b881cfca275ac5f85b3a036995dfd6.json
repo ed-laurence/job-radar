@@ -1,0 +1,8 @@
+{
+  "feature": "rejection_analysis",
+  "input_tokens": 218,
+  "model": "openai/gpt-oss-120b-maas",
+  "output_tokens": 200,
+  "prompt_hash": "a0b881cfca275ac5f85b3a036995dfd6",
+  "text": "{\"reasons\": [{\"category\": \"skills_gap\", \"detail\": \"wanted more hands-on Spark\"}], \"summary\": \"They chose a candidate with more Spark experience.\", \"lesson\": \"Put hands-on Spark work first for similar roles.\"}"
+}

@@ -1,0 +1,69 @@
+# Secrets and local config. Real values live in ~/.config/jobradar/ (outside the repo),
+# GitHub Actions secrets/variables, or Secret Manager. Never commit them.
+.env
+.env.*
+# Private overrides belong in ~/.config/jobradar/local.env; never in the repo.
+*.env
+local.env
+!.env.example
+*.tfvars
+*.tfvars.json
+!*.example.tfvars
+*.pem
+*.key
+id_ed25519*
+denylist.txt
+# A stray copy of the home config dir created by a mistaken "~" expansion.
+/~/
+.config/jobradar/
+
+# Tooling output
+.artifacts/
+.cache/
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+junit*.xml
+mutants/
+.mutmut-cache
+.stryker-tmp/
+
+# OpenTofu / Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+*_override.tf
+*_override.tf.json
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+*.egg-info/
+
+# Node / web
+node_modules/
+web/.next/
+web/out/
+web/playwright-report/
+web/test-results/
+*.tsbuildinfo
+next-env.d.ts
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Claude Code local overrides
+.claude/settings.local.json

@@ -1,0 +1,8 @@
+{
+  "feature": "followup",
+  "input_tokens": 280,
+  "model": "openai/gpt-oss-120b-maas",
+  "output_tokens": 200,
+  "prompt_hash": "a010c1d94a08366a8c6b3373601be55c",
+  "text": "{\"targets\": [{\"name\": \"Sam Lee\", \"role\": \"Talent Partner\", \"source\": \"ad\", \"channel\": \"connection_request\", \"why\": \"Named in the ad as the contact.\", \"message\": \"Hi Sam, the platform rebuild in the ad sounds like a good problem. I've applied for the Senior Data Engineer role. Is there a timeline for first interviews?\"}]}"
+}

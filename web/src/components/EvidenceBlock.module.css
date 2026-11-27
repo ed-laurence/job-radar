@@ -1,0 +1,234 @@
+/* The evidence block (after job-seeker's details.evidence): a verdict-coloured strip. */
+.evidence {
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-text-muted);
+  border-radius: 8px;
+  padding: 6px 10px;
+  max-width: 68ch;
+}
+
+.evidence[open],
+.open {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.open {
+  padding: var(--space-3) var(--space-4);
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--font-size-md);
+}
+
+.headline {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+}
+
+summary.headline {
+  list-style: none;
+  cursor: pointer;
+}
+
+summary.headline::-webkit-details-marker {
+  display: none;
+}
+
+summary.headline::before {
+  content: "▸ ";
+}
+
+.evidence[open] > summary.headline::before {
+  content: "▾ ";
+}
+
+.apply {
+  border-left-color: var(--color-success);
+}
+
+.apply .headline b {
+  color: var(--color-success);
+}
+
+.consider {
+  border-left-color: var(--color-warm);
+}
+
+.consider .headline b {
+  color: var(--color-warm);
+}
+
+.skip {
+  border-left-color: var(--color-danger);
+}
+
+.skip .headline b {
+  color: var(--color-danger);
+}
+
+.help,
+.why {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.sub {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+}
+
+.evlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--font-size-base);
+}
+
+.evlist li {
+  display: grid;
+  grid-template-columns: 1.2em minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+}
+
+.evlist li > div {
+  display: grid;
+  gap: 2px;
+}
+
+.mark {
+  font-weight: 700;
+  text-align: center;
+}
+
+.matched .mark,
+.offcv .mark {
+  color: var(--color-success);
+}
+
+.adjacent .mark {
+  color: var(--color-warm);
+}
+
+.missing .mark {
+  color: var(--color-danger);
+}
+
+.proof {
+  display: grid;
+  gap: 2px;
+}
+
+.quote {
+  margin: 0;
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-style: italic;
+  font-size: var(--font-size-sm);
+}
+
+.sourceLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.chip {
+  font-size: var(--font-size-xs);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.chipWarn {
+  background: var(--color-warm-soft);
+  color: var(--color-warm);
+  font-weight: 500;
+}
+
+.teamOver {
+  color: var(--color-warm);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.linkbtn {
+  border: 0;
+  background: none;
+  color: var(--color-accent);
+  font: 500 var(--font-size-sm) var(--font-sans);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
+}
+
+.button {
+  font: 500 var(--font-size-sm) var(--font-sans);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.linkbtn:disabled,
+.button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+summary.headline:focus-visible,
+.linkbtn:focus-visible,
+.button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.none {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.emptyCard {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.section {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.alert {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border-left: 4px solid var(--color-danger);
+  background: var(--color-danger-surface);
+  font-size: var(--font-size-sm);
+}
+
+.alert p {
+  margin: 0;
+}
+
+.alertTitle {
+  font-weight: 600;
+}

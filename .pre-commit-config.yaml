@@ -1,0 +1,90 @@
+# Written, not installed. Activate after the initial commit (when the owner asks):
+#   uvx pre-commit install
+# Hooks are fast, local subsets of scripts/check.sh; CI still runs the full gate.
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+fail_fast: false
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-toml
+      - id: check-json
+        exclude: (^|/)(tsconfig[^/]*|\.devcontainer/devcontainer)\.json$
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: [--branch, main]
+        stages: [pre-commit]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.2
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: generated-code-untouched
+        name: generated code is not hand-edited (regenerate with scripts/gen-api.sh)
+        entry: scripts/check.sh --only gen-api
+        language: system
+        files: ^(api/openapi\.yaml|backend/src/app/generated/|web/src/lib/api/generated/)
+        pass_filenames: false
+
+      - id: denylist
+        name: denylisted identifiers
+        entry: scripts/check.sh --only denylist
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: agent-lint
+        name: agent file template
+        entry: scripts/check.sh --only agent-lint
+        language: system
+        files: ^\.claude/agents/.*\.md$
+        pass_filenames: false
+
+      - id: ruff
+        name: ruff (backend)
+        entry: bash -c 'cd backend && uv run ruff check --fix . && uv run ruff format .'
+        language: system
+        files: ^backend/.*\.py$
+        pass_filenames: false
+
+      - id: biome
+        name: biome (web)
+        entry: bash -c 'cd web && corepack pnpm exec biome check --write .'
+        language: system
+        files: ^web/.*\.(ts|tsx|js|jsx|json|css)$
+        pass_filenames: false
+
+      - id: tofu-fmt
+        name: tofu fmt
+        entry: scripts/check.sh --only tofu-fmt
+        language: system
+        files: ^infra/.*\.(tf|tftest\.hcl)$
+        pass_filenames: false
+
+      - id: seed-pii
+        name: seed PII gate
+        entry: scripts/check.sh --only seed-pii
+        language: system
+        files: ^seed/
+        pass_filenames: false
+
+      - id: check-fast
+        name: scripts/check.sh --fast
+        entry: scripts/check.sh --fast
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

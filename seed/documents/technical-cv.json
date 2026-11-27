@@ -1,0 +1,110 @@
+{
+  "slot": "technical",
+  "filename": "alex-example-technical-cv.pdf",
+  "name": "Alex Example",
+  "headline": "Principal Data and AI Engineer | Python, GCP, AWS and LLMs",
+  "contact": "Melbourne VIC | alex@example.test | people.example.test/alex-example",
+  "sections": [
+    {
+      "title": "Summary",
+      "paragraphs": [
+        "Hands-on data and AI engineer with fifteen years of delivery, from industrial control software to cloud data platforms and production LLM features. Builds event-driven pipelines, ML services and retrieval-augmented assistants in Python on GCP and AWS, and has led small engineering teams without leaving the code."
+      ]
+    },
+    {
+      "title": "Experience",
+      "roles": [
+        {
+          "title": "Principal Engineer",
+          "employer": "Saltbush Digital Services",
+          "location": "Melbourne VIC",
+          "dates": "Mar 2024 - Present",
+          "blurb": "Consultancy building AI features for mid-sized retailers and insurers.",
+          "tech": "Python, FastAPI, Vertex AI, Claude, pgvector, Cloud Run, Terraform",
+          "bullets": [
+            "Built a claims-triage assistant using retrieval over policy documents and a tool-using agent; adopted by two client teams and cut first-response time by roughly a third.",
+            "Designed an evaluation harness (labelled cases, regression gates in CI) so prompt and model changes ship with measured quality instead of spot checks.",
+            "Set up the delivery template used on every engagement: typed Python, OpenAPI-first services, IaC and least-privilege service accounts."
+          ]
+        },
+        {
+          "title": "Engineering Manager",
+          "employer": "Tasman Analytics Services",
+          "location": "Melbourne VIC",
+          "dates": "Jan 2022 - Feb 2024",
+          "blurb": "Analytics platform provider for logistics companies.",
+          "tech": "Python, BigQuery, Pub/Sub, Dataflow, dbt, Looker",
+          "bullets": [
+            "Managed a team of six engineers that moved nightly batch reporting to streaming ingestion; data was available within minutes instead of the next morning.",
+            "Introduced data contracts and automated quality checks, reducing customer-reported data issues by about half over a year.",
+            "Kept roughly a third of my time on hands-on work: pipeline code reviews, on-call and performance tuning."
+          ]
+        },
+        {
+          "title": "Head of Data",
+          "employer": "Sapphire Learning",
+          "location": "Melbourne VIC",
+          "dates": "Feb 2019 - Dec 2021",
+          "blurb": "Venture-backed online learning provider.",
+          "tech": "Python, AWS Glue, Lambda, Redshift, PySpark, Metabase",
+          "bullets": [
+            "Owned ingestion, modelling and reporting for product and commercial teams, with a team of three.",
+            "Built a recommendation model for course suggestions that lifted enrolments from the home page by several percentage points in an A/B test.",
+            "Detected and filtered automated sign-ups that were inflating engagement metrics, restoring trust in the weekly numbers."
+          ]
+        },
+        {
+          "title": "Analytics Lead",
+          "employer": "Lumen Partners Institute",
+          "location": "Melbourne VIC",
+          "dates": "Apr 2016 - Jan 2019",
+          "blurb": "Research and advisory organisation.",
+          "tech": "Python, scikit-learn, PostgreSQL, Airflow",
+          "bullets": [
+            "Built a text-classification pipeline that tagged incoming research documents by topic, replacing a manual triage step.",
+            "Rebuilt the scraping and ingestion jobs for parallel execution, increasing daily throughput several-fold on the same budget."
+          ]
+        },
+        {
+          "title": "Data Engineer",
+          "employer": "Orbital Payments Co",
+          "location": "Melbourne VIC",
+          "dates": "Jul 2012 - Mar 2016",
+          "blurb": "Payments processor.",
+          "tech": "Python, Java, PostgreSQL, Hadoop",
+          "bullets": [
+            "Wrote reconciliation and fraud-signal pipelines processing millions of transactions a day.",
+            "Added automated tests and deployment pipelines to a previously manual release process."
+          ]
+        },
+        {
+          "title": "Software Engineer",
+          "employer": "Ridgeline Control Systems",
+          "location": "Geelong VIC",
+          "dates": "Jan 2009 - Jun 2012",
+          "blurb": "Industrial automation supplier.",
+          "tech": "C, Python, MATLAB",
+          "bullets": [
+            "Developed and verified control software for water-treatment equipment, including simulation tools that reduced on-site commissioning time."
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Education",
+      "items": [
+        "Master of Data Science, an Australian university",
+        "Bachelor of Engineering (Mechatronics), an Australian university"
+      ]
+    },
+    {
+      "title": "Skills",
+      "items": [
+        "AI and ML: LLM applications, retrieval-augmented generation, agents and tool use, evaluation, scikit-learn, PyTorch",
+        "Data engineering: Python, SQL, PySpark, BigQuery, Pub/Sub, Dataflow, dbt, Airflow, streaming and batch pipelines",
+        "Cloud and delivery: GCP, AWS, Cloud Run, Lambda, Docker, Terraform, CI/CD, OpenAPI",
+        "Background: C, MATLAB, control systems"
+      ]
+    }
+  ]
+}

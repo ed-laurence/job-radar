@@ -1,0 +1,8 @@
+{
+  "feature": "triage",
+  "input_tokens": 900,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 300,
+  "prompt_hash": "c8b10c5066286196b568f493cb17443b",
+  "text": "{\"type\": \"feature\", \"size\": \"M\", \"risk\": \"low\", \"areas\": [\"web\", \"api\"], \"acceptance_criteria\": [{\"test_id\": \"web/tests/board.spec.ts::run card shows cost\", \"expectation\": \"the run card shows cost_usd formatted as dollars\"}], \"needs_human_design\": false, \"out_of_scope\": false, \"likely_paths\": [\"web/src/features/board/\", \"api/openapi.yaml\"]}"
+}

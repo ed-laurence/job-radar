@@ -1,0 +1,8 @@
+{
+  "feature": "digest",
+  "input_tokens": 400,
+  "model": "openai/gpt-oss-120b-maas",
+  "output_tokens": 120,
+  "prompt_hash": "0256325fb30298735f43119208217a89",
+  "text": "{\"headline\": \"A quiet day on the board.\", \"bullets\": [\"No cards moved and no agent runs finished.\"]}"
+}

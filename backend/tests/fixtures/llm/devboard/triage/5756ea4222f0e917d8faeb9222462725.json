@@ -1,0 +1,8 @@
+{
+  "feature": "triage",
+  "input_tokens": 900,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 300,
+  "prompt_hash": "5756ea4222f0e917d8faeb9222462725",
+  "text": "{\"type\": \"test\", \"size\": \"S\", \"risk\": \"low\", \"areas\": [\"api\"], \"acceptance_criteria\": [{\"test_id\": \"backend/tests/unit/test_timing.py::prints slowest tests\", \"expectation\": \"the summary lists ten test ids with durations\"}], \"needs_human_design\": false, \"out_of_scope\": false, \"likely_paths\": [\"backend/tests/conftest.py\"]}"
+}

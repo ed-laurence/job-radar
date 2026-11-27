@@ -1,0 +1,113 @@
+# Local dev services. Started by scripts/dev.sh (and scripts/dev-db.sh for postgres).
+# All ports bind to 127.0.0.1 only. Credentials are local throwaway values.
+# Image tags are pinned; Renovate (.github/renovate.json) moves them to digests.
+name: jobradar
+
+services:
+  postgres:
+    image: postgres:16.6-alpine
+    environment:
+      POSTGRES_USER: jobradar
+      POSTGRES_PASSWORD: jobradar-local
+      POSTGRES_DB: jobradar
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobradar -d jobradar"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      # First start runs initdb, which takes ~30-60 s on Docker Desktop (WSL2); failures during
+      # this window don't count towards retries.
+      start_period: 120s
+      start_interval: 2s
+    networks: [app]
+
+  # GCS emulator. The backend's storage adapter reads STORAGE_EMULATOR_HOST.
+  fake-gcs:
+    image: fsouza/fake-gcs-server:1.50.2
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "127.0.0.1:4443", "-backend", "memory"]
+    ports:
+      - "127.0.0.1:4443:4443"
+    networks: [app]
+
+  # Allowlisting egress proxy for sandboxed agent containers (dev.sh --with-agents).
+  # Sandbox containers join only the internal "sandbox" network and reach the outside world
+  # through this proxy. AGENT_MODEL_ENDPOINT picks the one allowed model endpoint:
+  # vertex (*.googleapis.com) or llm-proxy (no external host). See squid.conf.
+  # The only internal services on "sandbox" are llm-proxy:8080 and coordinator:8100; sandboxes
+  # reach both directly (NO_PROXY), and squid allows exactly those two name+port pairs too.
+  egress-proxy:
+    image: ubuntu/squid:6.6-24.04_beta@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
+    volumes:
+      - ./scripts/lib/egress-proxy/squid.conf:/etc/squid/squid.conf:ro
+      - ./scripts/lib/egress-proxy/endpoint-${AGENT_MODEL_ENDPOINT:-vertex}.conf:/etc/squid/endpoint.conf:ro
+    ports:
+      - "127.0.0.1:3128:3128"
+    networks: [sandbox, egress]
+
+  # Credential-injecting forwarder for the Anthropic Messages API (profile "agents").
+  # The sandbox holds only a per-task HMAC token; the real key stays here. LLM_PROXY_SECRET and
+  # ANTHROPIC_API_KEY are passed through by name from the environment of scripts/dev.sh
+  # (~/.config/jobradar/), never from a file in the repo. No host port is published.
+  llm-proxy:
+    profiles: [agents]
+    build:
+      context: ./sandbox/llm-proxy
+    image: jobradar-llm-proxy:dev
+    environment:
+      - LLM_PROXY_SECRET
+      - ANTHROPIC_API_KEY
+      - LLM_PROXY_BACKEND=anthropic
+      - LLM_PROXY_MAX_BUDGET=${LLM_PROXY_MAX_BUDGET:-5000000}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    user: "10002:10002"
+    networks:
+      sandbox:
+        aliases: [llm-proxy]
+      egress: {}
+
+  # Coordinator (profile "agents"): HTTP API at http://coordinator:8100 on the sandbox network,
+  # plus GET /healthz. It reaches Postgres on "app" as the restricted login (RLS enforced; it
+  # refuses a superuser). COORDINATOR_DATABASE_URL (the restricted login's URL with host
+  # postgres:5432) and COORDINATOR_TOKEN_KEY are passed through from the environment of
+  # scripts/dev.sh (~/.config/jobradar/coordinator.secret), never from a file in the repo.
+  # Host port: loopback only, for local debugging.
+  coordinator:
+    profiles: [agents]
+    build:
+      context: ./backend
+      dockerfile: coordinator.Dockerfile
+    image: jobradar-coordinator:dev
+    environment:
+      - COORDINATOR_TOKEN_KEY
+      - DATABASE_URL=${COORDINATOR_DATABASE_URL:-}
+      - ENVIRONMENT=local
+      - GUARDS=fake
+    ports:
+      - "127.0.0.1:8100:8100"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    user: "10003:10003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      sandbox:
+        aliases: [coordinator]
+      app: {}
+
+volumes:
+  pgdata:
+    name: jobradar_pgdata
+
+networks:
+  app: {}
+  egress: {}
+  sandbox:
+    internal: true

@@ -1,0 +1,8 @@
+{
+  "feature": "kit",
+  "input_tokens": 241,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 200,
+  "prompt_hash": "8cb47fbca4e3dfbb224e03eafd3b378c",
+  "text": "Hi Sam, the Python and SQL pipeline work in your ad caught my interest. I'm applying for the Senior Data Engineer role. Who leads the platform team?"
+}

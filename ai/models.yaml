@@ -1,0 +1,77 @@
+# Model routing (ARCH-20). Read by backend/src/app/adapters/llm/routing.py at startup.
+# feature -> {provider, model, effort, fallback, daily_budget_usd, max_tokens}
+#
+# Providers: vertex-claude (AnthropicVertex), vertex-maas (Model Garden serverless open models),
+# vertex-gemini (reviewers; stub until M3). Regions come from settings, never from this file.
+# Claude model ids are on the M0 "things to verify" list for Vertex availability.
+# The open-weight model is pinned by the per-feature eval gate (within 5 points of the Claude
+# baseline); failing the gate flips its features back to Claude.
+version: 1
+
+defaults:
+  max_tokens: 4096
+  daily_budget_usd: 5.00
+
+# USD per million tokens. Vertex list prices; check before relying on dashboard totals.
+pricing:
+  claude-opus-5-5: {input: 4.00, output: 20.00, cache_read: 0.40}
+  claude-sonnet-5-5: {input: 2.00, output: 10.00, cache_read: 0.20}
+  claude-haiku-5-5: {input: 0.10, output: 0.50, cache_read: 0.01}
+  # VERIFY: Model Garden MaaS price for the pinned open model.
+  openai/gpt-oss-120b-maas: {input: 0.15, output: 0.60, cache_read: 0.15}
+
+features:
+  score:
+    {provider: vertex-claude, model: claude-haiku-5-5, effort: low, max_tokens: 2048, daily_budget_usd: 2.00,
+     fallback: {provider: vertex-claude, model: claude-sonnet-5-5, effort: low}}
+  extract:
+    {provider: vertex-claude, model: claude-haiku-5-5, effort: low, max_tokens: 2048, daily_budget_usd: 1.00,
+     fallback: {provider: vertex-claude, model: claude-sonnet-5-5, effort: low}}
+  kit:
+    {provider: vertex-claude, model: claude-sonnet-5-5, effort: medium, max_tokens: 8192, daily_budget_usd: 3.00,
+     fallback: {provider: vertex-claude, model: claude-opus-5-5, effort: medium}}
+  chat:
+    {provider: vertex-claude, model: claude-sonnet-5-5, effort: medium, max_tokens: 4096, daily_budget_usd: 2.00,
+     fallback: {provider: vertex-claude, model: claude-opus-5-5, effort: medium}}
+  # Research runs on tool use (one llm_calls row per turn); the agent also caps each run at
+  # 6 turns and $0.50. Tool use needs vertex-claude: other providers fall back.
+  research:
+    {provider: vertex-claude, model: claude-sonnet-5-5, effort: high, max_tokens: 8192, daily_budget_usd: 3.00,
+     fallback: {provider: vertex-claude, model: claude-opus-5-5, effort: high}}
+  triage:
+    {provider: vertex-claude, model: claude-sonnet-5-5, effort: medium, max_tokens: 4096, daily_budget_usd: 2.00,
+     fallback: {provider: vertex-claude, model: claude-opus-5-5, effort: medium}}
+  plan:
+    {provider: vertex-claude, model: claude-opus-5-5, effort: high, max_tokens: 16000, daily_budget_usd: 5.00,
+     fallback: {provider: vertex-claude, model: claude-sonnet-5-5, effort: high}}
+  dev:
+    {provider: vertex-claude, model: claude-opus-5-5, effort: high, max_tokens: 32000, daily_budget_usd: 20.00,
+     fallback: {provider: vertex-claude, model: claude-sonnet-5-5, effort: high}}
+  review:
+    {provider: vertex-claude, model: claude-opus-5-5, effort: high, max_tokens: 16000, daily_budget_usd: 10.00,
+     fallback: {provider: vertex-claude, model: claude-sonnet-5-5, effort: high}}
+  eval:
+    {provider: vertex-claude, model: claude-sonnet-5-5, effort: medium, max_tokens: 4096, daily_budget_usd: 5.00,
+     fallback: {provider: vertex-claude, model: claude-opus-5-5, effort: medium}}
+  # The evidence test: verbatim quotes matter more than speed, so Sonnet with an Opus fallback.
+  evidence:
+    {provider: vertex-claude, model: claude-sonnet-5-5, effort: medium, max_tokens: 4096, daily_budget_usd: 2.00,
+     fallback: {provider: vertex-claude, model: claude-opus-5-5, effort: medium}}
+  # Task chat on the dev board: tool use over the one card (read it, propose an edit), so Claude
+  # only. One llm_calls row per turn; the agent caps each reply at 5 turns.
+  task_chat:
+    {provider: vertex-claude, model: claude-sonnet-5-5, effort: medium, max_tokens: 4096, daily_budget_usd: 2.00,
+     fallback: {provider: vertex-claude, model: claude-opus-5-5, effort: medium}}
+  outreach:
+    {provider: vertex-claude, model: claude-sonnet-5-5, effort: low, max_tokens: 2048, daily_budget_usd: 1.00,
+     fallback: {provider: vertex-claude, model: claude-haiku-5-5, effort: low}}
+  # Open-weight features: automatic fallback to Claude Sonnet (logged as fallback_used=true).
+  digest:
+    {provider: vertex-maas, model: openai/gpt-oss-120b-maas, effort: medium, max_tokens: 4096, daily_budget_usd: 1.00,
+     fallback: {provider: vertex-claude, model: claude-sonnet-5-5, effort: low}}
+  followup:
+    {provider: vertex-maas, model: openai/gpt-oss-120b-maas, effort: medium, max_tokens: 2048, daily_budget_usd: 1.00,
+     fallback: {provider: vertex-claude, model: claude-sonnet-5-5, effort: low}}
+  rejection_analysis:
+    {provider: vertex-maas, model: openai/gpt-oss-120b-maas, effort: medium, max_tokens: 2048, daily_budget_usd: 1.00,
+     fallback: {provider: vertex-claude, model: claude-sonnet-5-5, effort: low}}

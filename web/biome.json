@@ -1,0 +1,58 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/.next",
+      "!**/.next-build",
+      "!**/.artifacts",
+      "!**/src/lib/api/generated",
+      "!**/playwright-report",
+      "!**/test-results",
+      "!**/next-env.d.ts"
+    ]
+  },
+  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
+  "javascript": { "formatter": { "quoteStyle": "double", "semicolons": "always" } },
+  "css": { "parser": { "cssModules": true } },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "security": {
+        "noDangerouslySetInnerHtml": "error",
+        "noDangerouslySetInnerHtmlWithChildren": "error"
+      },
+      "suspicious": { "noExplicitAny": "error", "noConsole": "error" },
+      "style": {
+        "noRestrictedGlobals": {
+          "level": "error",
+          "options": {
+            "deniedGlobals": {
+              "fetch": "ARCH-42: call the API through src/lib/api, not raw fetch.",
+              "EventSource": "Use src/lib/sse.ts for streams."
+            }
+          }
+        },
+        "noNonNullAssertion": "error",
+        "useImportType": "error"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "src/lib/api/**",
+        "src/lib/sse.ts",
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "src/test/**",
+        "tests/**"
+      ],
+      "linter": { "rules": { "style": { "noRestrictedGlobals": "off" } } }
+    }
+  ]
+}

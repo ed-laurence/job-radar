@@ -1,0 +1,8 @@
+{
+  "feature": "extract",
+  "input_tokens": 88,
+  "model": "claude-haiku-5-5",
+  "output_tokens": 200,
+  "prompt_hash": "b6257c1adf9d146d16094f210082ad11",
+  "text": "{\"title\": null, \"company\": \"Acme Pty Ltd\", \"location\": \"Melbourne VIC\", \"work_mode\": \"hybrid\", \"pay\": \"$150k-$170k\"}"
+}
