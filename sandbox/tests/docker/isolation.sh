@@ -15,7 +15,7 @@
 #      (the compose coordinator if it is running, else a throwaway stand-in);
 #   2. secrets: no ANTHROPIC_API_KEY / gcloud credentials / ~/.config/jobradar in env or on disk;
 #   3. the root filesystem is read-only (only /workspace and /tmp are writable), non-root user;
-#   4. llm-proxy refuses missing, expired, forged and over-budget tokens;
+#   4. llm-proxy refuses missing, expired, forged, retired-format (jrt1) and over-budget tokens;
 #   5. plumbing: bundle in -> result.bundle + handoff.json out (AGENT_MODE=stub);
 #   6. agent mode fails closed: with fake tokens and no working coordinator the run ends with
 #      a "failed" handoff and no edits (proves the image's agent runner and its wiring).
@@ -120,20 +120,33 @@ LLM_PROXY_SECRET="$("$PY" -c 'import secrets; print(secrets.token_hex(32))')"
 ANTHROPIC_API_KEY="fake-isolation-test-key-$("$PY" -c 'import secrets; print(secrets.token_hex(8))')"
 export LLM_PROXY_SECRET ANTHROPIC_API_KEY
 docker rm -f "$TEST_PROXY" >/dev/null 2>&1 || true
+# The price table is the repo's ai/models.yaml, mounted read-only like the compose service.
 docker run -d --name "$TEST_PROXY" --network jobradar_sandbox --read-only --cap-drop ALL \
   --security-opt no-new-privileges -e LLM_PROXY_SECRET -e ANTHROPIC_API_KEY \
+  --mount "type=bind,source=$(host_path "$ROOT/ai/models.yaml"),target=/etc/llm-proxy/models.yaml,readonly" \
   -e LLM_PROXY_UPSTREAM=http://127.0.0.1:9 "$PROXY_IMAGE" >/dev/null
 for _ in $(seq 1 30); do
   [[ "$(docker inspect -f '{{.State.Health.Status}}' "$TEST_PROXY" 2>/dev/null)" == healthy ]] && break
   sleep 1
 done
 mint() { PYTHONPATH="$(host_path "$ROOT/sandbox/llm-proxy")" "$PY" -m llm_proxy.mint "$@"; }
-PROBE_TOKEN_VALID="$(mint --task-id iso-1 --ttl 600 --budget 100000)"
-PROBE_TOKEN_SMALL="$(mint --task-id iso-2 --ttl 600 --budget 10)"
-PROBE_TOKEN_EXPIRED="$(mint --task-id iso-3 --ttl -60 --budget 100000)"
+# jrt2 tokens with USD budgets; SMALL is 10 micro-USD (any request's reservation exceeds it).
+PROBE_TOKEN_VALID="$(mint --task-id iso-1 --ttl 600 --budget-usd 1.00)"
+PROBE_TOKEN_SMALL="$(mint --task-id iso-2 --ttl 600 --usd-micro 10)"
+PROBE_TOKEN_EXPIRED="$(mint --task-id iso-3 --ttl -60 --budget-usd 1.00)"
 PROBE_TOKEN_FORGED="$(LLM_PROXY_SECRET="$("$PY" -c 'import secrets; print(secrets.token_hex(32))')" \
-  mint --task-id iso-4 --ttl 600 --budget 100000)"
-export PROBE_TOKEN_VALID PROBE_TOKEN_SMALL PROBE_TOKEN_EXPIRED PROBE_TOKEN_FORGED
+  mint --task-id iso-4 --ttl 600 --budget-usd 1.00)"
+# A correctly signed token in the retired jrt1 format (token budget): must get 401.
+PROBE_TOKEN_JRT1="$("$PY" - <<'PY'
+import base64, hashlib, hmac, json, os, time
+b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+claims = {"b": 100000, "exp": int(time.time()) + 600, "t": "iso-5"}
+payload = b64(json.dumps(claims, separators=(",", ":"), sort_keys=True).encode())
+sig = hmac.new(os.environ["LLM_PROXY_SECRET"].encode(), f"jrt1.{payload}".encode(), hashlib.sha256)
+print(f"jrt1.{payload}.{b64(sig.digest())}")
+PY
+)"
+export PROBE_TOKEN_VALID PROBE_TOKEN_SMALL PROBE_TOKEN_EXPIRED PROBE_TOKEN_FORGED PROBE_TOKEN_JRT1
 unset ANTHROPIC_API_KEY LLM_PROXY_SECRET  # never forwarded to the sandbox (run.sh passes names it knows)
 
 # ------------------------------------------------------------ probes in the hardened container
@@ -149,7 +162,8 @@ probe() { # extra args for the probe
     --entrypoint /usr/local/bin/python3 --arg /probe/probe.py "$@" \
     -- --mount "type=bind,source=$(host_path "$HERE"),target=/probe,readonly" \
        -e PROBE_LLM_PROXY="$TEST_PROXY:8080" \
-       -e PROBE_TOKEN_VALID -e PROBE_TOKEN_SMALL -e PROBE_TOKEN_EXPIRED -e PROBE_TOKEN_FORGED
+       -e PROBE_TOKEN_VALID -e PROBE_TOKEN_SMALL -e PROBE_TOKEN_EXPIRED -e PROBE_TOKEN_FORGED \
+       -e PROBE_TOKEN_JRT1
 }
 show() { # print the JSON result one check per line
   "$PY" -c 'import json,sys; [print(f"  {k}: {v}") for k, v in json.load(sys.stdin).items()]' >&2
@@ -194,16 +208,21 @@ agent_fails_closed() {
   git -C "$repo" bundle create "$in/input.bundle" HEAD main >/dev/null 2>&1
   # Fake, unsigned tokens: the stand-in has no /v1 API, the real coordinator refuses them.
   AGENT_MODE=agent SANDBOX_POSTGRES=0 RUN_ID=iso-run-1 AGENT_TIMEOUT_S=120 \
-    ANTHROPIC_AUTH_TOKEN=jrt1.isolation.fake COORDINATOR_TOKEN=jrc1.isolation.fake \
+    ANTHROPIC_AUTH_TOKEN=jrt2.isolation.fake COORDINATOR_TOKEN=jrc1.isolation.fake \
     "$ROOT/sandbox/run.sh" --task-id iso-agent --in "$in" --out "$out" \
     >"$WORK/run-agent.log" 2>&1 || return 1
-  grep -q "setup failed" "$WORK/run-agent.log" || return 1
-  "$PY" - "$out/handoff.json" <<'PY'
-import json, sys
-h = json.load(open(sys.argv[1], encoding="utf-8"))
+  grep -q "coordinator unreachable" "$WORK/run-agent.log" || return 1
+  grep -q "no changes; tests not run" "$WORK/run-agent.log" || return 1
+  "$PY" - "$out" <<'PY'
+import json, os, sys
+out = sys.argv[1]
+h = json.load(open(os.path.join(out, "handoff.json"), encoding="utf-8"))
 assert h["status"] == "failed", h["status"]
 assert h["changed_paths"] == [], h["changed_paths"]
-assert "without post_handoff" in h["summary"], h["summary"]
+assert h["summary"].startswith("Stopped: coordinator unreachable"), h["summary"]
+assert "no changes; tests not run" in h["skipped_checks"], h["skipped_checks"]
+log = [json.loads(line) for line in open(os.path.join(out, "agent.log"), encoding="utf-8")]
+assert [e["event"] for e in log] == ["stop"], log  # no model turn was taken
 print(f"  status={h['status']} summary={h['summary'][:70]}...", file=sys.stderr)
 PY
 }

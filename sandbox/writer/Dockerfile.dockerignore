@@ -16,6 +16,8 @@
 !sandbox/writer/coordinator_client.py
 !sandbox/writer/coordinator_tools.py
 !sandbox/writer/agent_sdk.py
+!sandbox/writer/llm_usage.py
+!sandbox/writer/run_log.py
 # Defence in depth, in case an allowlist line above is ever widened.
 **/.env
 **/.env.*

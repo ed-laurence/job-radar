@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.adapters.agents.docker_runner import DockerAgentRunner, SandboxConfig, SandboxDeps
 from app.adapters.agents.process import AsyncioProcessRunner
 from app.adapters.agents.tokens import CoordinatorTokenMint
+from app.adapters.agents.usage import DockerUsageProbe
 from app.adapters.codehost.local_git import LocalGitHost
 from app.adapters.db.devboard_leases import PgLeaseStore
 from app.adapters.db.devboard_runs import PgRunStore
@@ -42,7 +43,14 @@ from app.api.devboard.deps import DevboardServices
 from app.compose.jobs import GuardRedaction
 from app.domain.devboard.board import BoardService
 from app.domain.devboard.leases import LeaseService
-from app.domain.devboard.model import Actor, ActorKind
+from app.domain.devboard.model import (
+    Actor,
+    ActorKind,
+    NewStep,
+    RunKind,
+    RunRecord,
+    StepRecord,
+)
 from app.domain.devboard.plans import PlanService
 from app.domain.devboard.runs import RunService
 from app.domain.devboard.schedule import JobName, JobReport, JobRunLog
@@ -52,7 +60,14 @@ from app.domain.devboard.task_chat_decisions import ProposalDecisions
 from app.domain.devboard.workflow import Agents, Stores, Workflow
 from app.domain.identity import AppRole
 from app.domain.ports import LLM, NotificationHub
-from app.domain.ports.devboard import AgentRunner, LeaseStore, RunStore, TaskStore
+from app.domain.ports.devboard import (
+    AgentRunner,
+    LeaseStore,
+    RunFinish,
+    RunStore,
+    TaskStore,
+    TextRedactor,
+)
 from app.domain.ports.task_chat import TaskChatStore
 from app.guards.redaction import Redactor
 from app.settings import REPO_ROOT
@@ -64,6 +79,8 @@ type Sleep = Callable[[float], Awaitable[None]]
 
 # Pause between simulated agent steps, so the live stream is visible in the UI.
 STEP_DELAY_SECONDS = 0.6
+# Kept logs of sandboxed runs (gitignored with the rest of .artifacts/).
+AGENT_ARTIFACTS = REPO_ROOT / ".artifacts" / "agent-runs"
 
 
 @dataclass(frozen=True)
@@ -110,7 +127,12 @@ def devboard_llm(container: Container) -> LLM:
     return container.llm
 
 
-def agent_runner(container: Container, sleep: Sleep, step_delay: float) -> AgentRunner:
+def agent_runner(
+    container: Container,
+    sleep: Sleep,
+    step_delay: float,
+    redactor: TextRedactor | None = None,
+) -> AgentRunner:
     """The simulation, or (AGENT_SANDBOX=docker, local only) the Docker writer sandbox with
     LocalGitHost. Plan runs stay on the simulation either way. Builds touch no disk."""
     simulated = SimulatedAgentRunner(sleep, step_delay=step_delay)
@@ -125,29 +147,85 @@ def agent_runner(container: Container, sleep: Sleep, step_delay: float) -> Agent
         llm_base_url=settings.agent_llm_base_url,
         coordinator_url=settings.agent_coordinator_url,
         run_timeout_s=settings.agent_run_timeout_s,
+        artifacts_root=AGENT_ARTIFACTS,
     )
     deps = SandboxDeps(
         host=LocalGitHost(REPO_ROOT, settings.agent_remote_path),
         processes=AsyncioProcessRunner(),
         coordinator_tokens=CoordinatorTokenMint(coordinator_key.get_secret_value().encode()),
         planner=simulated,
+        usage=DockerUsageProbe(config),
+        redactor=redactor,
     )
     return DockerAgentRunner(config, deps, proxy_secret.get_secret_value().encode())
 
 
+class LabelledRunStore:
+    """Labels runs with the agent that actually executes them (`labels`, e.g. the Docker
+    runner's `writer` for dev runs) instead of the workflow's default, and keeps each run's
+    final step on that label."""
+
+    def __init__(self, inner: RunStore, labels: Mapping[RunKind, str]) -> None:
+        self._inner = inner
+        self._labels = dict(labels)
+
+    async def insert(self, user_id: uuid.UUID, run: RunRecord) -> None:
+        label = self._labels.get(run.kind)
+        await self._inner.insert(user_id, replace(run, agent=label) if label else run)
+
+    async def get(self, user_id: uuid.UUID, run_id: uuid.UUID) -> RunRecord | None:
+        return await self._inner.get(user_id, run_id)
+
+    async def for_task(
+        self, user_id: uuid.UUID, task_id: uuid.UUID, offset: int, limit: int
+    ) -> list[RunRecord]:
+        return await self._inner.for_task(user_id, task_id, offset, limit)
+
+    async def active(self, user_id: uuid.UUID, task_id: uuid.UUID) -> list[RunRecord]:
+        return await self._inner.active(user_id, task_id)
+
+    async def mark_running(self, user_id: uuid.UUID, run_id: uuid.UUID, at: datetime) -> None:
+        await self._inner.mark_running(user_id, run_id, at)
+
+    async def append_step(
+        self, user_id: uuid.UUID, run_id: uuid.UUID, step: NewStep, at: datetime
+    ) -> StepRecord:
+        return await self._inner.append_step(user_id, run_id, step, at)
+
+    async def finish(
+        self, user_id: uuid.UUID, run_id: uuid.UUID, finish: RunFinish, final: NewStep
+    ) -> RunRecord | None:
+        stored = await self._inner.get(user_id, run_id)
+        if stored is not None and stored.agent in self._labels.values():
+            final = replace(final, agent=stored.agent)
+        return await self._inner.finish(user_id, run_id, finish, final)
+
+    async def steps_after(
+        self, user_id: uuid.UUID, run_id: uuid.UUID, after_seq: int, limit: int
+    ) -> list[StepRecord]:
+        return await self._inner.steps_after(user_id, run_id, after_seq, limit)
+
+
+def _labelled(stores: BoardStores, runner: AgentRunner) -> BoardStores:
+    if not isinstance(runner, DockerAgentRunner):
+        return stores
+    return replace(stores, runs=LabelledRunStore(stores.runs, runner.labels))
+
+
 def build(container: Container, *, sleep: Sleep = asyncio.sleep) -> DevboardRuntime:
     settings, clock, ids = container.settings, container.clock, container.ids
-    stores = board_stores(container)
     redactor = Redactor(settings.denylist_values(), container.pii, container.guard)
+    delay = 0.0 if settings.environment == "test" else STEP_DELAY_SECONDS
+    runner = agent_runner(container, sleep, delay, redactor)
+    stores = _labelled(board_stores(container), runner)
     board = BoardService(stores.tasks, container.pii, clock, ids)
     runs = RunService(stores.runs, stores.tasks, stores.hub, redactor, clock)
     plans = PlanService(stores.tasks, board, clock, ids)
     leases = LeaseService(stores.leases, clock)
     dispatcher = InProcessDispatcher()
-    delay = 0.0 if settings.environment == "test" else STEP_DELAY_SECONDS
     agents = Agents(
         triage=TriageLlmAgent(devboard_llm(container), container.guard, container.pii),
-        runner=agent_runner(container, sleep, delay),
+        runner=runner,
     )
     workflow = Workflow(
         Stores(tasks=stores.tasks, runs=stores.runs),

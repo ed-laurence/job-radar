@@ -177,11 +177,13 @@ class CoordinatorClient:
     def release(self, paths: list[str] | None = None) -> dict[str, object]:
         return self.request("POST", "/v1/leases/release", {"paths": paths} if paths else {})
 
-    def step(self, kind: str, text: str) -> dict[str, object]:
-        return self.request("POST", "/v1/steps", {"kind": kind, "text": text})
+    def step(self, kind: str, text: str, timeout: float | None = None) -> dict[str, object]:
+        return self.request("POST", "/v1/steps", {"kind": kind, "text": text}, timeout=timeout)
 
-    def handoff(self, handoff: Mapping[str, object]) -> dict[str, object]:
-        return self.request("POST", "/v1/handoff", {"handoff": dict(handoff)})
+    def handoff(
+        self, handoff: Mapping[str, object], timeout: float | None = None
+    ) -> dict[str, object]:
+        return self.request("POST", "/v1/handoff", {"handoff": dict(handoff)}, timeout=timeout)
 
     def help(self, text: str) -> dict[str, object]:
         return self.request("POST", "/v1/help", {"text": text})

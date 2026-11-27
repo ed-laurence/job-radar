@@ -16,6 +16,8 @@ import pytest
 
 from app.adapters.agents.docker_runner import (
     HARDENING_FLAGS,
+    NO_PROXY,
+    USAGE_GRACE_S,
     DockerAgentRunner,
     SandboxConfig,
     SandboxDeps,
@@ -24,7 +26,6 @@ from app.adapters.agents.docker_runner import (
 )
 from app.adapters.agents.tokens import CoordinatorTokensUnavailable
 from app.domain.devboard.model import RunKind
-from app.settings import REPO_ROOT
 from tests.unit.agents_runner.fakes import (
     BASE_SHA,
     PROXY_SECRET,
@@ -35,6 +36,7 @@ from tests.unit.agents_runner.fakes import (
     FakePlanner,
     FakeProcessRunner,
     FakeTools,
+    FakeUsageProbe,
     context,
     docker_env_flags,
     handoff,
@@ -67,6 +69,7 @@ class Harness:
             processes=self.processes,
             coordinator_tokens=self.coordinator,
             planner=self.planner,
+            usage=FakeUsageProbe(),
         )
         self.runner = DockerAgentRunner(config, deps, PROXY_SECRET, wall=lambda: WALL)
 
@@ -83,14 +86,13 @@ def _b64d(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
 
 
-async def test_argv_keeps_every_hardening_flag_of_run_sh() -> None:
+async def test_argv_keeps_every_hardening_flag() -> None:
+    # Drift against sandbox/run.sh (flags and env) is test_run_sh_parity.py.
     harness = Harness()
     await harness.runner.run(context(), FakeTools())
     argv = harness.processes.argv
-    run_sh = (REPO_ROOT / "sandbox" / "run.sh").read_text(encoding="utf-8")
     assert argv[:3] == ["docker", "run", "--rm"]
     for flag in HARDENING_FLAGS:
-        assert " ".join(flag) in run_sh, f"{flag} drifted from sandbox/run.sh"
         joined = "\x00".join(argv)
         assert "\x00".join(flag) in joined, f"{flag} missing from the docker argv"
     assert "--privileged" not in argv
@@ -121,7 +123,7 @@ async def test_secrets_travel_by_name_only(monkeypatch: pytest.MonkeyPatch) -> N
     flags = docker_env_flags(argv)
     assert "ANTHROPIC_AUTH_TOKEN" in flags
     assert "COORDINATOR_TOKEN" in flags
-    assert env["ANTHROPIC_AUTH_TOKEN"].startswith("jrt1.")
+    assert env["ANTHROPIC_AUTH_TOKEN"].startswith("jrt2.")
     assert env["COORDINATOR_TOKEN"] == coordinator.token
     joined = " ".join(argv)
     for secret in (env["ANTHROPIC_AUTH_TOKEN"], env["COORDINATOR_TOKEN"], PROXY_SECRET.decode()):
@@ -141,9 +143,12 @@ async def test_env_points_at_the_proxies_and_carries_ids_and_budgets() -> None:
     assert _env_value(argv, "TASK_ID") == str(TASK_ID)
     assert _env_value(argv, "RUN_ID") == str(RUN_ID)
     assert _env_value(argv, "HTTPS_PROXY") == "http://egress-proxy:3128"
-    assert _env_value(argv, "NO_PROXY") == "localhost,127.0.0.1,llm-proxy"
+    assert _env_value(argv, "NO_PROXY") == NO_PROXY == "localhost,127.0.0.1,llm-proxy,coordinator"
+    assert _env_value(argv, "no_proxy") == NO_PROXY
     assert _env_value(argv, "AGENT_TIMEOUT_S") == "1800"
-    assert _env_value(argv, "AGENT_BUDGET_USD") == "2.0"
+    # The USD budget travels in the llm-proxy token (jrt2), which enforces it.
+    claims = json.loads(_b64d(harness.processes.env["ANTHROPIC_AUTH_TOKEN"].split(".")[1]))
+    assert claims["usd_micro"] == 2_000_000
     assert argv[argv.index("--network") + 1] == "jobradar_sandbox"
 
 
@@ -153,12 +158,13 @@ async def test_llm_proxy_token_is_task_scoped_and_expires_with_the_run() -> None
     token = harness.processes.env["ANTHROPIC_AUTH_TOKEN"]
     prefix, payload, signature = token.split(".")
     expected = hmac.new(PROXY_SECRET, f"{prefix}.{payload}".encode(), hashlib.sha256).digest()
-    assert prefix == "jrt1"
+    assert prefix == "jrt2"
     assert hmac.compare_digest(_b64d(signature), expected)
     claims = json.loads(_b64d(payload))
     assert claims["t"] == str(TASK_ID)
-    assert claims["exp"] == int(WALL) + 600
-    assert claims["b"] > 0
+    # Valid a little past the wall clock, so the spend can still be read after a kill.
+    assert claims["exp"] == int(WALL) + 600 + USAGE_GRACE_S
+    assert claims["usd_micro"] == 2_000_000
     assert _env_value(harness.processes.argv, "AGENT_TIMEOUT_S") == "600"
 
 

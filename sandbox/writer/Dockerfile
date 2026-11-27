@@ -89,7 +89,7 @@ RUN set -eux; \
 # --- Runtime user and layout. Only /workspace, /tmp and /out are writable (see sandbox/run.sh).
 COPY sandbox/writer/entrypoint.sh sandbox/writer/handoff.py sandbox/writer/pytest_report.py \
      sandbox/writer/agent_runner.py sandbox/writer/agent_policy.py sandbox/writer/agent_prompt.py \
-     sandbox/writer/coordinator_client.py sandbox/writer/coordinator_tools.py sandbox/writer/agent_sdk.py /opt/sandbox/
+     sandbox/writer/coordinator_client.py sandbox/writer/coordinator_tools.py sandbox/writer/agent_sdk.py      sandbox/writer/llm_usage.py sandbox/writer/run_log.py /opt/sandbox/
 RUN set -eux; \
     useradd --uid "${SANDBOX_UID}" --user-group --no-create-home --home-dir /tmp/home \
       --shell /usr/sbin/nologin sandbox; \

@@ -162,7 +162,7 @@ if [[ $WITH_AGENTS -eq 1 ]]; then
     log "created scratch agent remote at $remote"
   fi
   # HMAC keys, generated once outside the repo and never printed:
-  #   llm-proxy.secret   -> LLM_PROXY_SECRET       (per-task jrt1 tokens for llm-proxy)
+  #   llm-proxy.secret   -> LLM_PROXY_SECRET       (per-task jrt2 USD-budget tokens for llm-proxy)
   #   coordinator.secret -> COORDINATOR_TOKEN_KEY  (per-task jrc1 tokens for the coordinator)
   agent_secret() { # file name -> prints the value (to a variable, never the terminal)
     local file="$JR_CONFIG_DIR/$1"

@@ -2,7 +2,8 @@
 # Writer sandbox entrypoint.
 #
 # In:  /in/input.bundle (git bundle of the base commit; read-only mount)
-# Out: /out/result.bundle (branch agent/<TASK_ID>) and /out/handoff.json
+# Out: /out/result.bundle (branch agent/<TASK_ID>) and /out/handoff.json; in agent mode also
+#      /out/agent.log (one metadata line per model turn) and /out/steps.jsonl (posted steps)
 # Env: TASK_ID (required), TASK_BASE_REF (default HEAD), SANDBOX_POSTGRES=1|0,
 #      SANDBOX_SUITES (default "backend,web"), AGENT_MODE=agent|stub (default agent)
 #      agent mode also needs: ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, COORDINATOR_URL,
@@ -12,9 +13,11 @@
 # AGENT_MODE=agent runs the Claude Agent SDK loop (agent_runner.py): the task comes from the
 # coordinator's get_task, the system prompt from AGENTS.md + docs/standards/ at the base commit.
 # AGENT_MODE=stub makes no edits and only runs the repo's tests (isolation plumbing test).
-# Either way the repo tests are then re-run here, whatever changed is committed on the branch,
-# and result.bundle + handoff.json are written. Exit 0 when the plumbing worked (outcomes live
-# in handoff.json); non-zero only when the plumbing itself failed.
+# Then the repo tests are re-run here (agent mode: only if the agent changed something;
+# otherwise skipped_checks says "no changes; tests not run"), whatever changed is committed on
+# the branch, and result.bundle + handoff.json are written. Exit 0 when the plumbing worked
+# (outcomes live in handoff.json, including early stops); non-zero only when the plumbing
+# itself failed.
 set -euo pipefail
 
 IN=/in OUT=/out WORK=/workspace/repo RESULTS=/tmp/results
@@ -85,6 +88,7 @@ fi
 AGENT_MODE="${AGENT_MODE:-agent}"
 AGENT_DIR=/tmp/agent
 agent_args=()
+RUN_TESTS=1
 case "$AGENT_MODE" in
   stub) log "agent: stub (no edits)" ;;
   agent)
@@ -102,11 +106,13 @@ case "$AGENT_MODE" in
     # timeout signals the whole process group, so the CLI child dies with the runner.
     agent_rc=0
     timeout --kill-after=20 "$timeout_s" /opt/agent/venv/bin/python /opt/sandbox/agent_runner.py \
-      --repo "$WORK" --base-dir "$AGENT_DIR/base" --out "$AGENT_DIR/result.json" || agent_rc=$?
+      --repo "$WORK" --base-dir "$AGENT_DIR/base" --out "$AGENT_DIR/result.json" --log-dir "$OUT" \
+      || agent_rc=$?
     case $agent_rc in
       0) ;;
       124|137) log "agent: wall-clock timeout"; SKIPPED+=("agent: stopped at AGENT_TIMEOUT_S") ;;
       3) log "agent: setup failed (see above)" ;;
+      4) log "agent: coordinator unreachable (see above); the model was not called" ;;
       *) log "agent: runner exited $agent_rc" ;;
     esac
     if [[ $agent_rc -ne 0 && -s "$AGENT_DIR/cli.log" ]]; then
@@ -114,13 +120,20 @@ case "$AGENT_MODE" in
     fi
     cd "$WORK"
     agent_args=(--agent-mode --agent-result "$AGENT_DIR/result.json")
+    # No edits (committed or not) -> nothing to test; say so instead of re-running the suite.
+    if [[ -z "$(git status --porcelain 2>/dev/null)" && "$(git rev-parse HEAD 2>/dev/null)" == "$base_sha" ]]; then
+      RUN_TESTS=0
+      SKIPPED+=("no changes; tests not run")
+      agent_args+=(--tests-not-run)
+      log "agent: no changes; tests not run"
+    fi
     ;;
   *) fail_handoff "unknown AGENT_MODE (agent|stub)" ;;
 esac
 
 # ------------------------------------------------------------ 4. tests (JSON reports only; logs stay in /tmp)
 report_args=()
-if [[ ",$SUITES," == *",backend,"* ]]; then
+if [[ $RUN_TESTS -eq 1 && ",$SUITES," == *",backend,"* ]]; then
   if [[ -f backend/pyproject.toml ]]; then
     marker="not evals"; [[ -n "${DATABASE_URL:-}" ]] || marker="not integration and not evals"
     (cd backend && SANDBOX_PYTEST_REPORT="$RESULTS/backend.json" PYTHONPATH=/opt/sandbox \
@@ -132,7 +145,7 @@ if [[ ",$SUITES," == *",backend,"* ]]; then
     SKIPPED+=("pytest: no backend/ in the bundle")
   fi
 fi
-if [[ ",$SUITES," == *",web,"* ]]; then
+if [[ $RUN_TESTS -eq 1 && ",$SUITES," == *",web,"* ]]; then
   if [[ -f web/package.json && -x web/node_modules/.bin/vitest ]]; then
     (cd web && node_modules/.bin/vitest run --reporter=default --reporter=json \
       --outputFile.json="$RESULTS/web.json") >/tmp/web-tests.log 2>&1 || true

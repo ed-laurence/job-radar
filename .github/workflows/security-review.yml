@@ -79,9 +79,12 @@ jobs:
         env:
           DENYLIST: ${{ secrets.JOBRADAR_DENYLIST }}
         run: |
-          umask 077
-          printf '%s\n' "$DENYLIST" > "$RUNNER_TEMP/denylist.txt"
-          echo "JOBRADAR_DENYLIST=$RUNNER_TEMP/denylist.txt" >> "$GITHUB_ENV"
+          # Secret unset: leave JOBRADAR_DENYLIST unset so the scan reports SKIP instead of erroring.
+          if [ -n "$DENYLIST" ]; then
+            umask 077
+            printf '%s\n' "$DENYLIST" > "$RUNNER_TEMP/denylist.txt"
+            echo "JOBRADAR_DENYLIST=$RUNNER_TEMP/denylist.txt" >> "$GITHUB_ENV"
+          fi
 
       - name: Deterministic layer
         id: scanners
@@ -93,7 +96,7 @@ jobs:
             --report-format json --report-path "$WORK/gitleaks.json" >/dev/null 2>&1 || fail=1
           python3 scripts/lib/scan_summary.py gitleaks "$WORK/gitleaks.json" >> "$out" || true
           echo "## denylist" >> "$out"
-          if [ -s "$JOBRADAR_DENYLIST" ]; then
+          if [ -n "${JOBRADAR_DENYLIST:-}" ] && [ -s "$JOBRADAR_DENYLIST" ]; then
             python3 scripts/lib/denylist_scan.py "$JOBRADAR_DENYLIST" --stdin-text < "$WORK/diff.patch" >> "$out" || fail=1
           else
             echo "SKIP: JOBRADAR_DENYLIST secret not set" >> "$out"
@@ -109,18 +112,22 @@ jobs:
           echo "fail=$fail" >> "$GITHUB_OUTPUT"
           echo "deterministic layer: fail=$fail"
 
+      # Before bootstrap there is no review provider: skip the agent; the check fails with that reason.
       - name: Authenticate to Vertex (review provider)
+        if: vars.GCP_REVIEW_WIF_PROVIDER != ''
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_REVIEW_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_REVIEW_SA }}
 
       - uses: actions/setup-node@v4
+        if: vars.GCP_REVIEW_WIF_PROVIDER != ''
         with:
           node-version: "20"
 
       - name: Security agent (read-only Claude Code on Vertex)
         id: agent
+        if: vars.GCP_REVIEW_WIF_PROVIDER != ''
         env:
           CLAUDE_CODE_USE_VERTEX: "1"
           ANTHROPIC_VERTEX_PROJECT_ID: ${{ vars.GCP_REVIEW_PROJECT_ID }}
@@ -139,6 +146,7 @@ jobs:
           SCANNERS_FAIL: ${{ steps.scanners.outputs.fail }}
           AGENT_RC: ${{ steps.agent.outputs.rc }}
           CHECK_ID: ${{ steps.check.outputs.id }}
+          REVIEW_CONFIGURED: ${{ vars.GCP_REVIEW_WIF_PROVIDER != '' }}
         with:
           script: |
             const fs = require('fs');
@@ -147,9 +155,16 @@ jobs:
             const redact = (t) => {
               const list = process.env.JOBRADAR_DENYLIST;
               if (!list || !fs.existsSync(list)) return t;
-              return execFileSync('python3', ['scripts/lib/denylist_scan.py', list, '--redact'], { input: t }).toString();
+              // Fails closed: if redaction errors, post a fixed message, never the unredacted text.
+              try {
+                return execFileSync('python3', ['scripts/lib/denylist_scan.py', list, '--redact'], { input: t }).toString();
+              } catch (e) {
+                return '**Verdict:** changes_requested (redaction failed; see the job log)';
+              }
             };
-            let findings = { findings: [], verdict: 'changes_requested', error: 'agent did not run' };
+            const notConfigured = process.env.REVIEW_CONFIGURED !== 'true';
+            let findings = { findings: [], verdict: 'changes_requested',
+              error: notConfigured ? 'review provider not configured: run bootstrap to set GCP_REVIEW_WIF_PROVIDER' : 'agent did not run' };
             try { findings = JSON.parse(fs.readFileSync(`${work}/findings.json`, 'utf8')); } catch (e) {}
             const rows = (findings.findings || []).map(f =>
               `| ${f.severity} | ${f.citation || '-'} | ${f.file || '-'}:${f.line || '-'} | ${(f.fix || '').replace(/\|/g, '/')} |`);
@@ -164,5 +179,5 @@ jobs:
             await github.rest.checks.update({
               owner: context.repo.owner, repo: context.repo.repo, check_run_id: Number(process.env.CHECK_ID),
               status: 'completed', conclusion: ok ? 'success' : 'failure',
-              output: { title: ok ? 'No blockers' : 'Blockers found', summary: summary.slice(0, 65000) },
+              output: { title: ok ? 'No blockers' : (notConfigured ? 'Not configured' : 'Blockers found'), summary: summary.slice(0, 65000) },
             });
