@@ -6,7 +6,10 @@ copies test output or logs into the handoff: only counts, the first failing test
 
 With ``--agent-result`` (written by agent_runner.py) the agent's own ``post_handoff`` supplies
 the summary, rubric IDs and open questions. Test counts and changed paths always come from the
-sandbox's re-run and the git diff, never from the agent's claims.
+sandbox's re-run and the git diff, never from the agent's claims. When the run stopped early
+the summary leads with the runner's plain-words ``detail`` ("Stopped: model budget used up
+after 4 turns ($1.97 of $2.00)."). ``--tests-not-run`` says the agent changed nothing, so the
+sandbox skipped the tests.
 """
 
 from __future__ import annotations
@@ -23,7 +26,11 @@ MAX_SKIPPED = 10
 MAX_ITEM_CHARS = 160
 MAX_RUBRIC = 30
 MAX_QUESTIONS = 3
+MAX_DETAIL_CHARS = 300
 STATUSES = ("done", "failed", "error")
+KILLED_DETAIL = (
+    "Stopped: wall-clock limit reached; the runner was killed before it wrote its result."
+)
 
 
 @dataclass
@@ -84,6 +91,7 @@ class AgentOutcome:
     agent_status: str | None = None
     rubric_checked: list[str] = field(default_factory=list[str])
     open_questions: list[str] = field(default_factory=list[str])
+    detail: str | None = None
 
     @property
     def finished(self) -> bool:
@@ -93,7 +101,7 @@ class AgentOutcome:
 def read_agent_result(path: Path | None) -> AgentOutcome:
     """A missing or unreadable result means the agent was killed (wall-clock timeout)."""
     if path is None or not path.is_file():
-        return AgentOutcome(stop="timeout")
+        return AgentOutcome(stop="timeout", agent_status="missing", detail=KILLED_DETAIL)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -101,10 +109,12 @@ def read_agent_result(path: Path | None) -> AgentOutcome:
     data = cast("dict[str, object]", raw) if isinstance(raw, dict) else {}
     stop = data.get("stop")
     stop = stop if isinstance(stop, str) and stop else "error"
+    raw_detail = data.get("detail")
+    detail = raw_detail.strip()[:MAX_DETAIL_CHARS] if isinstance(raw_detail, str) else None
     posted = data.get("handoff")
     handoff = cast("dict[str, object]", posted) if isinstance(posted, dict) else {}
     if not handoff:
-        return AgentOutcome(stop=stop, agent_status="missing")
+        return AgentOutcome(stop=stop, agent_status="missing", detail=detail or None)
     summary = handoff.get("summary")
     status = handoff.get("status")
     return AgentOutcome(
@@ -113,6 +123,7 @@ def read_agent_result(path: Path | None) -> AgentOutcome:
         agent_status=status if isinstance(status, str) else "missing",
         rubric_checked=_strings(handoff.get("rubric_checked"), MAX_RUBRIC),
         open_questions=_strings(handoff.get("open_questions"), MAX_QUESTIONS),
+        detail=detail or None,
     )
 
 
@@ -124,8 +135,10 @@ def build(
     status: str | None = None,
     summary: str | None = None,
     agent: AgentOutcome | None = None,
+    tests_ran: bool = True,
 ) -> dict[str, object]:
     tally = f"{counts.passed} passed, {counts.failed} failed, {counts.skipped} skipped"
+    tests = f"Sandbox re-run: {tally}." if tests_ran else "No changes; tests not run."
     if status is None:
         unfinished = agent is not None and not agent.finished
         status = "failed" if counts.failed or unfinished else "done"
@@ -133,14 +146,17 @@ def build(
         raise ValueError(f"status must be one of {STATUSES}")
     if summary is None and agent is not None:
         summary = agent.summary
-        if summary is None or not agent.finished:
+        if not agent.finished and agent.detail:
+            summary = f"{agent.detail} {summary or ''} {tests}"
+            summary = " ".join(summary.split())
+        elif summary is None or not agent.finished:
             reason = (
                 "without post_handoff"
                 if agent.agent_status == "missing"
                 else f"with handoff status {agent.agent_status}"
             )
             lead = f"Agent run for task {task_id} stopped ({agent.stop}) {reason}"
-            summary = f"{lead}. {summary or ''} Sandbox re-run: {tally}.".replace("  ", " ")
+            summary = f"{lead}. {summary or ''} {tests}".replace("  ", " ")
     if summary is None:
         summary = (
             f"Stub agent for task {task_id}: no edits; ran the repo tests in the sandbox ({tally})."
@@ -174,6 +190,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--summary")
     parser.add_argument("--agent-result", type=Path, help="agent_runner.py result JSON")
     parser.add_argument("--agent-mode", action="store_true", help="the real agent ran")
+    parser.add_argument(
+        "--tests-not-run", action="store_true", help="the agent changed nothing; no tests ran"
+    )
     args = parser.parse_args(argv)
 
     counts = Counts()
@@ -183,7 +202,16 @@ def main(argv: list[str] | None = None) -> int:
         read_vitest(path, counts)
     paths = read_changed(args.changed) if args.changed else []
     agent = read_agent_result(args.agent_result) if args.agent_mode else None
-    handoff = build(args.task_id, counts, paths, args.skipped, args.status, args.summary, agent)
+    handoff = build(
+        args.task_id,
+        counts,
+        paths,
+        args.skipped,
+        args.status,
+        args.summary,
+        agent,
+        tests_ran=not args.tests_not_run,
+    )
     tmp = args.out.with_suffix(".tmp")
     tmp.write_text(json.dumps(handoff, indent=2) + "\n", encoding="utf-8")
     tmp.replace(args.out)

@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.adapters.agents.usage import ProxyUsage
+
 from app.adapters.codehost.local_git import DiffStat, GitError, PublishedBranch, Snapshot
 from app.domain.devboard.model import (
     Actor,
@@ -95,6 +97,9 @@ class FakeProcessRunner:
     )
     kills: list[list[str]] = field(default_factory=list[list[str]])
     seen_dirs: list[Path] = field(default_factory=list[Path])
+    # What `docker run` itself prints (stdout and stderr), written to `output` when given.
+    console: bytes = b"sandbox: starting\nsandbox: done\n"
+    outputs: list[Path | None] = field(default_factory=list[Path | None])
 
     async def run(
         self,
@@ -103,8 +108,12 @@ class FakeProcessRunner:
         *,
         stop: threading.Event,
         kill_argv: Sequence[str],
+        output: Path | None = None,
     ) -> int:
         self.calls.append((list(argv), dict(env)))
+        self.outputs.append(output)
+        if output is not None:
+            await asyncio.to_thread(output.write_bytes, self.console)
         out = mount_source(argv, "/out")
         self.seen_dirs.extend([out, mount_source(argv, "/in")])
         assert (mount_source(argv, "/in") / "input.bundle").is_file()
@@ -124,6 +133,34 @@ class FakeProcessRunner:
     @property
     def env(self) -> dict[str, str]:
         return self.calls[0][1]
+
+
+@dataclass
+class FakeUsageProbe:
+    """Plays llm-proxy's `GET /v1/usage`: `None` means unreachable."""
+
+    answer: ProxyUsage | None = field(
+        default_factory=lambda: ProxyUsage(
+            usd_micro_used=420_000, usd_micro_budget=2_000_000, requests=7
+        )
+    )
+    tokens: list[str] = field(default_factory=list[str])
+
+    async def usage(self, token: str) -> ProxyUsage | None:
+        self.tokens.append(token)
+        return self.answer
+
+
+@dataclass
+class FakeRedactor:
+    """Stands in for the guard redactor: masks one known marker and records what it saw."""
+
+    marker: str = "PII-MARKER-0001"
+    seen: list[str] = field(default_factory=list[str])
+
+    async def redact(self, text: str) -> str:
+        self.seen.append(text)
+        return text.replace(self.marker, "[redacted]")
 
 
 @dataclass

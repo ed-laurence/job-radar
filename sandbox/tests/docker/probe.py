@@ -109,15 +109,27 @@ def llm_status(token: str | None, max_tokens: int = 100) -> int:
     return status
 
 
+def usage_status(token: str) -> int:
+    host, _, port = LLM_PROXY.partition(":")
+    conn = http.client.HTTPConnection(host, int(port or 80), timeout=10)
+    conn.request("GET", "/v1/usage", headers={"authorization": f"Bearer {token}"})
+    status = conn.getresponse().status
+    conn.close()
+    return status
+
+
 def token_checks() -> int:
     """Tokens are minted on the host and passed in by env NAME (PROBE_TOKEN_*)."""
     checks = {
         "missing_token_401": llm_status(None) == 401,
         "expired_token_401": llm_status(os.environ["PROBE_TOKEN_EXPIRED"]) == 401,
         "forged_token_401": llm_status(os.environ["PROBE_TOKEN_FORGED"]) == 401,
+        "jrt1_token_401": llm_status(os.environ["PROBE_TOKEN_JRT1"]) == 401,
         "over_budget_token_403": llm_status(os.environ["PROBE_TOKEN_SMALL"], 1000) == 403,
         # Valid token: passes auth, then fails upstream (the test proxy has a dead upstream).
         "valid_token_reaches_upstream_502": llm_status(os.environ["PROBE_TOKEN_VALID"]) == 502,
+        "usage_endpoint_200": usage_status(os.environ["PROBE_TOKEN_VALID"]) == 200,
+        "usage_endpoint_jrt1_401": usage_status(os.environ["PROBE_TOKEN_JRT1"]) == 401,
     }
     print(json.dumps(checks, sort_keys=True))
     return 0 if all(checks.values()) else 1

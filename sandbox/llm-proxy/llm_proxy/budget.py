@@ -1,4 +1,4 @@
-"""Per-task token budgets (in memory; a proxy restart resets usage, tokens still expire)."""
+"""Per-task budgets in micro-USD (in memory: a proxy restart resets usage; tokens still expire)."""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ class BudgetExceededError(Exception):
 class _Task:
     used: int = 0
     reserved: int = 0
+    requests: int = 0
+    refusals: int = 0
 
 
 @dataclass(frozen=True)
@@ -22,9 +24,16 @@ class Reservation:
     amount: int
 
 
+@dataclass(frozen=True)
+class TaskUsage:
+    used: int
+    requests: int
+    refusals: int
+
+
 @dataclass
 class BudgetLedger:
-    """Reserve ``max_tokens`` before a call, settle with the real usage afterwards.
+    """Reserve an estimate before a call, settle with the real cost afterwards (micro-USD).
 
     Reservations stop parallel requests from jointly overrunning the budget.
     """
@@ -36,19 +45,26 @@ class BudgetLedger:
         with self._lock:
             task = self._tasks.setdefault(task_id, _Task())
             if task.used + task.reserved + amount > budget:
+                task.refusals += 1
                 raise BudgetExceededError(task_id)
             task.reserved += amount
             return Reservation(task_id, amount)
 
     def settle(self, reservation: Reservation, used: int) -> int:
-        """Release the reservation and record ``used`` tokens. Returns the task's total."""
+        """Release the reservation and record ``used`` micro-USD. Returns the task's total."""
         with self._lock:
             task = self._tasks.setdefault(reservation.task_id, _Task())
             task.reserved = max(0, task.reserved - reservation.amount)
             task.used += max(0, used)
+            task.requests += 1
             return task.used
 
     def used(self, task_id: str) -> int:
         with self._lock:
             task = self._tasks.get(task_id)
             return task.used if task else 0
+
+    def usage(self, task_id: str) -> TaskUsage:
+        with self._lock:
+            task = self._tasks.get(task_id) or _Task()
+            return TaskUsage(task.used, task.requests, task.refusals)

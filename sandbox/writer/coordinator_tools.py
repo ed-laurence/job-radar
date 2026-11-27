@@ -145,8 +145,14 @@ def _text(args: Mapping[str, object], key: str, limit: int) -> str:
 
 
 class CoordinatorTools:
-    def __init__(self, client: cc.CoordinatorClient, tracker: agent_policy.RunTracker) -> None:
-        self._client, self._tracker = client, tracker
+    def __init__(
+        self,
+        client: cc.CoordinatorClient,
+        tracker: agent_policy.RunTracker,
+        on_step: Callable[[str, str], None] | None = None,
+    ) -> None:
+        """``on_step(kind, text)`` runs after each step the coordinator accepted."""
+        self._client, self._tracker, self._on_step = client, tracker, on_step
 
     async def _io(self, fn: Callable[[], dict[str, object]]) -> dict[str, object]:
         return await asyncio.to_thread(fn)
@@ -203,6 +209,8 @@ class CoordinatorTools:
         text = _text(args, "text", cc.MAX_STEP_CHARS)
         result = await self._io(lambda: self._client.step(str(kind), text))
         self._tracker.steps_posted += 1
+        if self._on_step is not None:
+            self._on_step(str(kind), text)
         return result
 
     async def _handoff(self, args: Mapping[str, object]) -> dict[str, object]:

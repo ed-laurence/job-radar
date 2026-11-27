@@ -7,14 +7,19 @@ import json
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 from llm_proxy.budget import BudgetLedger
+from llm_proxy.pricing import Price, load_price_table
 from llm_proxy.server import Config, make_server
 from llm_proxy.tokens import mint
 
 SECRET = b"test-secret-0123456789abcdef0123456789"
 API_KEY = "fake-upstream-key-not-real-000000"
+# The real price table (the proxy gets the same file mounted read-only).
+MODELS_YAML = Path(__file__).resolve().parents[3] / "ai" / "models.yaml"
+PRICES: dict[str, Price] = load_price_table(MODELS_YAML)
 
 
 @dataclass
@@ -68,8 +73,18 @@ class Proxy:
     ledger: BudgetLedger
     logs: list[dict[str, object]]
 
-    def token(self, task_id: str = "T-1", ttl: int = 600, budget: int = 10_000) -> str:
+    def token(self, task_id: str = "T-1", ttl: int = 600, budget: int = 1_000_000) -> str:
+        """``budget`` in micro-USD (default $1.00)."""
         return mint(SECRET, task_id, ttl, budget)
+
+    def get(self, path: str, token: str | None = None) -> tuple[int, bytes]:
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        headers = {"authorization": f"Bearer {token}"} if token is not None else {}
+        conn.request("GET", path, headers=headers)
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+        return resp.status, data
 
     def post(
         self,
@@ -95,7 +110,9 @@ def proxy() -> Iterator[Proxy]:
     upstream = StubUpstream(response=message_response())
     ledger = BudgetLedger()
     logs: list[dict[str, object]] = []
-    config = Config(secret=SECRET, api_key=API_KEY, upstream=upstream, log=logs.append)
+    config = Config(
+        secret=SECRET, api_key=API_KEY, upstream=upstream, prices=PRICES, log=logs.append
+    )
     server = make_server(config, "127.0.0.1", 0, ledger)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

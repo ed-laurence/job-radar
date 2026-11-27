@@ -1,9 +1,17 @@
 """Credential-injecting forwarder for the Anthropic Messages API.
 
 The sandbox sends ``Authorization: Bearer <per-task token>`` (or ``x-api-key: <token>``). The
-proxy checks the token, the model allowlist and the task budget, swaps in the real key from its
-own environment and forwards. It logs metadata only (task id, model, token counts, status),
-never prompts or completions, and redacts credentials from every error it returns or logs.
+proxy checks the token, the model allowlist, the model's price and the task's USD budget, swaps
+in the real key from its own environment and forwards. It logs metadata only (task id, model,
+token counts, costs, status), never prompts or completions, and redacts credentials from every
+error it returns or logs.
+
+Budget (micro-USD, from the jrt2 token): before forwarding, reserve the request body at the
+input price (len/4 tokens; count_tokens is not available offline) plus
+min(max_tokens, LLM_PROXY_RESERVE_OUTPUT_TOKENS) at the output price; afterwards settle the real
+cost from the response usage (streamed or not). An upstream error with no usage costs nothing; a
+success with no usage is charged the reservation. ``GET /v1/usage`` (task token) returns
+``{"usd_micro_used", "usd_micro_budget", "requests", "budget_refusals"}``.
 """
 
 from __future__ import annotations
@@ -13,20 +21,34 @@ import json
 import os
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import IO, Protocol
 from urllib.parse import urlsplit
 
 from .budget import BudgetExceededError, BudgetLedger, Reservation
 from .jsonval import as_int, as_object
+from .pricing import (
+    Price,
+    PriceTableError,
+    TokenCounts,
+    cost_usd_micro,
+    load_price_table,
+    reserve_usd_micro,
+    usd_to_micro,
+)
 from .redact import redact, redact_bytes
 from .tokens import Claims, TokenError, check_secret, verify
 
 DEFAULT_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
 MESSAGES = "/v1/messages"
 COUNT_TOKENS = "/v1/messages/count_tokens"
+USAGE = "/v1/usage"
+DEFAULT_PRICES_PATH = "/etc/llm-proxy/models.yaml"
+DEFAULT_MAX_BUDGET_USD = "20.00"
+DEFAULT_RESERVE_OUTPUT_TOKENS = 8192
 ALLOWED_QUERIES = ("", "beta=true")
 FORWARD_REQUEST_HEADERS = ("anthropic-version", "anthropic-beta", "content-type", "accept")
 FORWARD_RESPONSE_HEADERS = ("content-type", "request-id", "retry-after")
@@ -101,7 +123,10 @@ class Config:
     api_key: str
     upstream: Upstream
     models: frozenset[str] = frozenset(DEFAULT_MODELS)
-    max_budget: int = 5_000_000
+    # Empty = every model refused (fail closed); production loads ai/models.yaml.
+    prices: Mapping[str, Price] = field(default_factory=dict[str, Price])
+    max_usd_micro: int = 20_000_000
+    reserve_output_tokens: int = DEFAULT_RESERVE_OUTPUT_TOKENS
     max_body: int = 32 << 20
     log: Callable[[dict[str, object]], None] = field(default=lambda _e: None)
 
@@ -131,6 +156,19 @@ def config_from_env(env: dict[str, str]) -> Config:
     if not api_key:
         raise SystemExit("ANTHROPIC_API_KEY is not set in the llm-proxy environment")
     models = env.get("LLM_PROXY_MODELS")
+    prices_path = Path(env.get("LLM_PROXY_PRICES") or DEFAULT_PRICES_PATH)
+    try:
+        prices = load_price_table(prices_path)
+        max_usd_micro = usd_to_micro(env.get("LLM_PROXY_MAX_BUDGET_USD") or DEFAULT_MAX_BUDGET_USD)
+        reserve_output = int(
+            env.get("LLM_PROXY_RESERVE_OUTPUT_TOKENS") or DEFAULT_RESERVE_OUTPUT_TOKENS
+        )
+    except PriceTableError as exc:
+        raise SystemExit(f"llm-proxy price table (LLM_PROXY_PRICES): {exc}") from None
+    except ValueError as exc:
+        raise SystemExit(f"llm-proxy budget settings: {exc}") from None
+    if reserve_output <= 0:
+        raise SystemExit("LLM_PROXY_RESERVE_OUTPUT_TOKENS must be positive")
     return Config(
         secret=secret,
         api_key=api_key,
@@ -138,7 +176,9 @@ def config_from_env(env: dict[str, str]) -> Config:
         models=frozenset(m.strip() for m in models.split(",") if m.strip())
         if models
         else frozenset(DEFAULT_MODELS),
-        max_budget=int(env.get("LLM_PROXY_MAX_BUDGET", "5000000")),
+        prices=prices,
+        max_usd_micro=max_usd_micro,
+        reserve_output_tokens=reserve_output,
         log=json_logger(sys.stderr),
     )
 
@@ -169,13 +209,12 @@ class Usage:
                 setattr(self, name, value)
                 self.seen = True
 
-    @property
-    def total(self) -> int:
-        return (
-            self.input_tokens
-            + self.output_tokens
-            + self.cache_creation_input_tokens
-            + self.cache_read_input_tokens
+    def counts(self) -> TokenCounts:
+        return TokenCounts(
+            self.input_tokens,
+            self.output_tokens,
+            self.cache_creation_input_tokens,
+            self.cache_read_input_tokens,
         )
 
 
@@ -273,11 +312,41 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     # -- routes
+    def _claims(self, event: dict[str, object]) -> Claims:
+        try:
+            return verify(self.config.secret, self._token())
+        except TokenError as err:
+            event["auth"] = err.reason
+            raise ProxyError(401, "authentication_error", "invalid task token") from None
+
     def do_GET(self) -> None:
         if self.path == "/healthz":
             self._send_json(200, {"status": "ok"})
+        elif self.path == USAGE:
+            self._usage()
         else:
             self._send_json(404, {"type": "error", "error": {"type": "not_found_error"}})
+
+    def _usage(self) -> None:
+        event: dict[str, object] = {"event": "usage_request"}
+        try:
+            claims = self._claims(event)
+            usage = self.ledger.usage(claims.task_id)
+            event.update(task_id=claims.task_id, status=200)
+            self._send_json(
+                200,
+                {
+                    "usd_micro_used": usage.used,
+                    "usd_micro_budget": claims.usd_micro,
+                    "requests": usage.requests,
+                    "budget_refusals": usage.refusals,
+                },
+            )
+        except ProxyError as err:
+            event.update(status=err.status, error=err.kind)
+            self._send_error(err)
+        finally:
+            self.config.log(event)
 
     def do_POST(self) -> None:
         started = time.monotonic()
@@ -307,12 +376,8 @@ class Handler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         if url.path not in (MESSAGES, COUNT_TOKENS) or url.query not in ALLOWED_QUERIES:
             raise ProxyError(404, "not_found_error", "unsupported endpoint")
-        try:
-            claims = verify(self.config.secret, self._token())
-        except TokenError as err:
-            event["auth"] = err.reason
-            raise ProxyError(401, "authentication_error", "invalid task token") from None
-        if claims.budget > self.config.max_budget:
+        claims = self._claims(event)
+        if claims.usd_micro > self.config.max_usd_micro:
             raise ProxyError(403, "permission_error", "token budget above proxy maximum")
         event["task_id"] = claims.task_id
         body = self._read_body()
@@ -326,25 +391,32 @@ class Handler(BaseHTTPRequestHandler):
         event["model"] = model if isinstance(model, str) and model in self.config.models else None
         if not isinstance(model, str) or model not in self.config.models:
             raise ProxyError(403, "permission_error", "model not allowed")
+        price = self.config.prices.get(model)
+        if price is None:  # fail closed: no price, no way to hold the budget
+            raise ProxyError(403, "permission_error", "model has no price in the price table")
 
         reservation: Reservation | None = None
         if url.path == MESSAGES:
             max_tokens = as_int(request.get("max_tokens"))
             if max_tokens is None or max_tokens <= 0:
                 raise ProxyError(400, "invalid_request_error", "max_tokens must be positive")
+            amount = reserve_usd_micro(
+                price, len(body), max_tokens, self.config.reserve_output_tokens
+            )
+            event.update(reserved_usd_micro=amount, budget_usd_micro=claims.usd_micro)
             try:
-                reservation = self.ledger.reserve(claims.task_id, claims.budget, max_tokens)
+                reservation = self.ledger.reserve(claims.task_id, claims.usd_micro, amount)
             except BudgetExceededError:
-                event["budget"] = claims.budget
+                event["used_usd_micro"] = self.ledger.used(claims.task_id)
                 raise ProxyError(403, "permission_error", "task token budget exhausted") from None
         target = url.path + (f"?{url.query}" if url.query else "")
-        self._forward(target, body, claims, reservation, event)
+        self._forward(target, body, price, reservation, event)
 
     def _forward(
         self,
         path: str,
         body: bytes,
-        claims: Claims,
+        price: Price,
         reservation: Reservation | None,
         event: dict[str, object],
     ) -> None:
@@ -363,9 +435,14 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             resp.close()
             if reservation:
-                charged = usage.total if usage.seen else reservation.amount
-                event["used_total"] = self.ledger.settle(reservation, charged)
-                event["budget"] = claims.budget
+                if usage.seen:
+                    charged = cost_usd_micro(price, usage.counts())
+                elif resp.status >= 400:
+                    charged = 0  # refused upstream before any work: nothing billed
+                else:
+                    charged = reservation.amount  # success without usage: fail closed
+                event["cost_usd_micro"] = charged
+                event["used_usd_micro"] = self.ledger.settle(reservation, charged)
             event.update(
                 status=resp.status,
                 input_tokens=usage.input_tokens,

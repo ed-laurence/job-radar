@@ -55,6 +55,9 @@ def parse_handoff(raw: bytes, task_id: str) -> Handoff:
 
 def read_handoff(path: Path, task_id: str) -> Handoff:
     """Blocking (run it in a thread)."""
+    if path.is_symlink():
+        # The agent controls /out; a link could point anywhere on the host.
+        raise HandoffError("The sandbox handoff is not a regular file.")
     try:
         size = path.stat().st_size
         if size > MAX_HANDOFF_BYTES:

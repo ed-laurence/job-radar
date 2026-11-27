@@ -15,7 +15,7 @@ ENV = {
     "COORDINATOR_URL": "http://coordinator:8100",
     "COORDINATOR_TOKEN": "jrc1.fake.fake",
     "ANTHROPIC_BASE_URL": "http://llm-proxy:8080",
-    "ANTHROPIC_AUTH_TOKEN": "jrt1.fake.fake",
+    "ANTHROPIC_AUTH_TOKEN": "jrt2.fake.fake",
 }
 ARGV = ["--base-dir", "/sandbox/agent/base", "--out", "/sandbox/agent/result.json"]
 
@@ -36,7 +36,7 @@ def test_settings_require_contract_env(name: str) -> None:
     with pytest.raises(ar.SettingsError) as info:
         ar.load_settings(env, ARGV)
     assert name in str(info.value)
-    assert "jrc1" not in str(info.value) and "jrt1" not in str(info.value)
+    assert "jrc1" not in str(info.value) and "jrt2" not in str(info.value)
 
 
 def test_options_no_web_no_repo_settings_no_coordinator_config() -> None:
@@ -89,4 +89,4 @@ def test_setup_failure_writes_result_without_secrets(tmp_path: Path) -> None:
     text = out.read_text()
     data = json.loads(text)
     assert data["stop"] == "setup_error" and data["posted_handoff"] is False
-    assert "jrc1" not in text and "jrt1" not in text
+    assert "jrc1" not in text and "jrt2" not in text

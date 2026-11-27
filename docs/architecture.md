@@ -184,19 +184,28 @@ Specified in `plan.md` "Sandboxing" and "Code review"; the jobs are provisioned 
   - Its only way out is the squid egress proxy, which allows one endpoint per mode:
     `*.googleapis.com` for Vertex, or the local `llm-proxy`.
   - `llm-proxy` (`sandbox/llm-proxy/`) holds the real model credential. It accepts only
-    per-task HMAC tokens with an expiry, a token budget and a model allowlist, and logs metadata
+    per-task `jrt2` HMAC tokens with an expiry and a USD budget, and only priced models. It prices
+    each call from `ai/models.yaml` `pricing:` (mounted read-only; cache writes 1.25× and cache
+    reads 0.1× input unless priced, an assumption to verify), reserves an estimate before
+    forwarding, settles the real cost, and reports spend at `GET /v1/usage`. It logs metadata
     only, so the sandbox never holds a key.
   - `check.sh` runs `sandbox` (unit tests, lint, types) and `sandbox-isolation` (real-container
     proofs, skipped when Docker isn't running).
 - The board runs on `SimulatedAgentRunner` (`domain/devboard/simulation.py`) by default. With
   `AGENT_SANDBOX=docker` (set by `dev.sh --with-agents`; refused in prod), `DockerAgentRunner`
-  (`adapters/agents/`) bundles the working tree, mints the `jrt1` and `jrc1` tokens, runs the
+  (`adapters/agents/`) bundles the working tree, mints the `jrt2` (USD budget) and `jrc1` tokens, runs the
   writer with `sandbox/run.sh`'s hardening, enforces the timeout and kill switch, validates the
   handoff and publishes the result through `LocalGitHost` (`adapters/codehost/`) as
   `agent/<task>-<run>` in a scratch bare repo (`~/.cache/jobradar/agent-remote`). The project's
   own `.git` is never touched. Inside, the writer runs a Claude Agent SDK loop
   (`AGENT_MODE=agent`; `stub` for the plumbing test) with an allowlisted Bash, workspace-only
   file tools, edits limited to granted leases, and the standards pack read from the base commit.
+  Code fetches the task from the coordinator before any model call and fails fast if it can't.
+  Every early stop (budget, turns, timeout, error) still writes a failed handoff whose summary
+  becomes the card's reason; tests run only when files changed. The runner records spend from
+  llm-proxy and keeps each run's handoff, agent log and steps in `.artifacts/agent-runs/<run>/`
+  (last 20). Known gap: `dev_runs.cost_usd` can't be null yet, so an unknown spend shows $0.00
+  with a note in the outcome.
 
 ## End-to-end flows
 

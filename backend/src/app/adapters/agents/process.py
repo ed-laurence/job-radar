@@ -14,7 +14,7 @@ import threading
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import BinaryIO, Protocol
 
 KILL_TIMEOUT_S = 30.0
 
@@ -33,9 +33,12 @@ class ProcessRunner(Protocol):
         *,
         stop: threading.Event,
         kill_argv: Sequence[str],
+        output: Path | None = None,
     ) -> int:
         """Run `argv` to exit and return its code. Once `stop` is set, run `kill_argv` (e.g.
-        `docker kill <name>`), give the process a grace period, then kill it."""
+        `docker kill <name>`), give the process a grace period, then kill it. With `output`,
+        the process's stdout and stderr go to that file (created or truncated); otherwise
+        they are discarded."""
         ...
 
 
@@ -89,8 +92,12 @@ class AsyncioProcessRunner:
         *,
         stop: threading.Event,
         kill_argv: Sequence[str],
+        output: Path | None = None,
     ) -> int:
-        return await _portable(lambda: self._supervise(argv, env, stop, kill_argv))
+        if output is None:
+            return await _portable(lambda: self._supervise(argv, env, stop, kill_argv, None))
+        with output.open("wb") as sink:
+            return await _portable(lambda: self._supervise(argv, env, stop, kill_argv, sink))
 
     async def _supervise(
         self,
@@ -98,12 +105,13 @@ class AsyncioProcessRunner:
         env: Mapping[str, str],
         stop: threading.Event,
         kill_argv: Sequence[str],
+        sink: BinaryIO | None,
     ) -> int:
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL if sink is None else sink,
+            stderr=asyncio.subprocess.DEVNULL if sink is None else asyncio.subprocess.STDOUT,
             env=dict(env),
         )
         try:

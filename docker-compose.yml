@@ -61,7 +61,11 @@ services:
       - LLM_PROXY_SECRET
       - ANTHROPIC_API_KEY
       - LLM_PROXY_BACKEND=anthropic
-      - LLM_PROXY_MAX_BUDGET=${LLM_PROXY_MAX_BUDGET:-5000000}
+      # Ceiling for any single task's USD budget; tokens asking for more are refused.
+      - LLM_PROXY_MAX_BUDGET_USD=${LLM_PROXY_MAX_BUDGET_USD:-20.00}
+    volumes:
+      # Prices come from the repo's model routing file (read-only); unpriced models are refused.
+      - ./ai/models.yaml:/etc/llm-proxy/models.yaml:ro
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

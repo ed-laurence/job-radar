@@ -2,16 +2,48 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import http.client
 import json
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import ClassVar
 
-from conftest import API_KEY, SECRET, Proxy, StubResponse, request
-from llm_proxy.server import HttpUpstream
+import pytest
+from conftest import (
+    API_KEY,
+    PRICES,
+    SECRET,
+    Proxy,
+    StubResponse,
+    StubUpstream,
+    message_response,
+    request,
+)
+from llm_proxy.budget import BudgetLedger
+from llm_proxy.pricing import TokenCounts, cost_usd_micro, reserve_usd_micro
+from llm_proxy.server import Config, HttpUpstream, config_from_env, make_server
 from llm_proxy.tokens import mint
+
+SONNET = PRICES["claude-sonnet-5-5"]
+
+
+def _body_len(body: dict[str, object]) -> int:
+    return len(json.dumps(body).encode())
+
+
+def _reserve(body: dict[str, object]) -> int:
+    max_tokens = body["max_tokens"]
+    assert isinstance(max_tokens, int)
+    return reserve_usd_micro(SONNET, _body_len(body), max_tokens, 8192)
+
+
+def _sonnet_cost(inp: int, out: int, write: int = 0, read: int = 0) -> int:
+    return cost_usd_micro(SONNET, TokenCounts(inp, out, write, read))
 
 
 def _error_type(data: bytes) -> str:
@@ -40,6 +72,22 @@ def test_forged_token_is_refused(proxy: Proxy) -> None:
     assert status == 401
 
 
+def _jrt1_token(secret: bytes) -> str:
+    """A correctly signed token in the old (token-budget) format."""
+    payload = json.dumps({"b": 200_000, "exp": 4_000_000_000, "t": "T-1"}, separators=(",", ":"))
+    p64 = base64.urlsafe_b64encode(payload.encode()).rstrip(b"=").decode()
+    sig = hmac.new(secret, f"jrt1.{p64}".encode(), hashlib.sha256).digest()
+    return f"jrt1.{p64}.{base64.urlsafe_b64encode(sig).rstrip(b'=').decode()}"
+
+
+def test_jrt1_token_is_refused_with_401(proxy: Proxy) -> None:
+    status, _, data = proxy.post(request(), _jrt1_token(SECRET))
+    assert status == 401
+    assert _error_type(data) == "authentication_error"
+    assert proxy.logs[-1]["auth"] == "legacy_token"
+    assert proxy.upstream.calls == []
+
+
 def test_over_budget_token_is_refused(proxy: Proxy) -> None:
     token = proxy.token(budget=50)
     status, _, data = proxy.post(request(max_tokens=100), token)
@@ -48,12 +96,106 @@ def test_over_budget_token_is_refused(proxy: Proxy) -> None:
     assert proxy.upstream.calls == []
 
 
-def test_budget_is_consumed_by_real_usage(proxy: Proxy) -> None:
-    token = proxy.token(budget=40)
-    assert proxy.post(request(max_tokens=20), token)[0] == 200  # uses 10 + 5
-    assert proxy.ledger.used("T-1") == 15
-    assert proxy.post(request(max_tokens=25), token)[0] == 200  # 15 + 25 <= 40
-    assert proxy.post(request(max_tokens=20), token)[0] == 403  # 30 + 20 > 40
+def test_budget_is_consumed_by_real_cost(proxy: Proxy) -> None:
+    body = request(max_tokens=20)
+    cost = _sonnet_cost(10, 5)  # the stub's usage: 10 in, 5 out
+    token = proxy.token(budget=cost + _reserve(body))
+    assert proxy.post(body, token)[0] == 200
+    assert proxy.ledger.used("T-1") == cost
+    assert proxy.post(body, token)[0] == 200  # cost + reserve <= budget
+    assert proxy.post(body, token)[0] == 403  # 2 * cost + reserve > budget
+    assert proxy.ledger.used("T-1") == 2 * cost
+
+
+def test_reservation_estimates_input_from_the_body_and_caps_output(proxy: Proxy) -> None:
+    # max_tokens 32000 holds only 8192 output tokens; the body is priced at len/4 input tokens.
+    body = request(max_tokens=32_000, system="x" * 4000)
+    expected = reserve_usd_micro(SONNET, _body_len(body), 8192, 8192)
+    assert proxy.post(body, proxy.token(budget=expected))[0] == 200
+    assert proxy.logs[-1]["reserved_usd_micro"] == expected
+    assert proxy.post(body, proxy.token("T-2", budget=expected - 1))[0] == 403
+
+
+def test_upstream_error_without_usage_costs_nothing(proxy: Proxy) -> None:
+    proxy.upstream.response = StubResponse(
+        529, [("content-type", "application/json")], [b'{"type":"error"}']
+    )
+    assert proxy.post(request(), proxy.token())[0] == 529
+    assert proxy.ledger.used("T-1") == 0
+
+
+def test_success_without_usage_is_charged_the_reservation(proxy: Proxy) -> None:
+    proxy.upstream.response = StubResponse(200, [("content-type", "application/json")], [b"{}"])
+    body = request()
+    assert proxy.post(body, proxy.token())[0] == 200
+    assert proxy.ledger.used("T-1") == _reserve(body)
+
+
+def test_unpriced_model_is_refused_even_when_allowed() -> None:
+    upstream = StubUpstream(response=message_response())
+    config = Config(
+        secret=SECRET,
+        api_key=API_KEY,
+        upstream=upstream,
+        models=frozenset({"claude-unpriced-9"}),
+        prices=PRICES,
+    )
+    server = make_server(config, "127.0.0.1", 0, BudgetLedger())
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        p = Proxy(server.server_address[1], upstream, BudgetLedger(), [])
+        status, _, data = p.post(request(model="claude-unpriced-9"), p.token())
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert status == 403
+    assert "price" in json.loads(data)["error"]["message"]
+    assert upstream.calls == []
+
+
+def test_usage_endpoint_reports_spend_for_the_token_task(proxy: Proxy) -> None:
+    token = proxy.token(budget=2_000_000)
+    assert proxy.post(request(), token)[0] == 200
+    assert proxy.post(request(), token)[0] == 200
+    proxy.post(request(), proxy.token("T-other"))
+    status, data = proxy.get("/v1/usage", token)
+    assert status == 200
+    assert json.loads(data) == {
+        "usd_micro_used": 2 * _sonnet_cost(10, 5),
+        "usd_micro_budget": 2_000_000,
+        "requests": 2,
+        "budget_refusals": 0,
+    }
+
+
+def test_usage_endpoint_counts_budget_refusals(proxy: Proxy) -> None:
+    token = proxy.token(budget=10)
+    assert proxy.post(request(), token)[0] == 403
+    status, data = proxy.get("/v1/usage", token)
+    assert status == 200
+    assert json.loads(data)["budget_refusals"] == 1
+
+
+def test_usage_endpoint_needs_a_valid_token(proxy: Proxy) -> None:
+    assert proxy.get("/v1/usage")[0] == 401
+    assert proxy.get("/v1/usage", _jrt1_token(SECRET))[0] == 401
+    assert proxy.get("/v1/usage", mint(b"z" * 40, "T-1", 600, 1000))[0] == 401
+
+
+def test_config_requires_a_readable_price_table(tmp_path: Path) -> None:
+    env = {"LLM_PROXY_SECRET": SECRET.decode(), "ANTHROPIC_API_KEY": API_KEY}
+    with pytest.raises(SystemExit) as err:
+        config_from_env({**env, "LLM_PROXY_PRICES": str(tmp_path / "absent.yaml")})
+    assert "price table" in str(err.value)
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("pricing:\n  m: {input: 1}\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        config_from_env({**env, "LLM_PROXY_PRICES": str(bad)})
+    good = tmp_path / "models.yaml"
+    good.write_text("pricing:\n  claude-opus-5-5: {input: 4, output: 20}\n", encoding="utf-8")
+    config = config_from_env({**env, "LLM_PROXY_PRICES": str(good)})
+    assert set(config.prices) == {"claude-opus-5-5"}
+    assert config.max_usd_micro == 20_000_000 and config.reserve_output_tokens == 8192
 
 
 def test_model_outside_allowlist_is_refused(proxy: Proxy) -> None:
@@ -142,7 +284,20 @@ def test_streaming_is_relayed_and_usage_counted(proxy: Proxy) -> None:
     assert status == 200
     assert headers["content-type"] == "text/event-stream"
     assert data == b"".join(events)
-    assert proxy.ledger.used("T-1") == 42
+    assert proxy.ledger.used("T-1") == _sonnet_cost(30, 12)
+
+
+def test_streaming_cache_usage_is_priced_from_the_table(proxy: Proxy) -> None:
+    events = [
+        b'data: {"type":"message_start","message":{"usage":{"input_tokens":3,'
+        b'"cache_creation_input_tokens":500,"cache_read_input_tokens":20000,'
+        b'"output_tokens":1}}}\n\n',
+        b'data: {"type":"message_delta","usage":{"output_tokens":400}}\n\n',
+    ]
+    proxy.upstream.response = StubResponse(200, [("content-type", "text/event-stream")], events)
+    assert proxy.post(request(stream=True), proxy.token())[0] == 200
+    assert proxy.ledger.used("T-1") == _sonnet_cost(3, 400, 500, 20_000)
+    assert proxy.logs[-1]["cost_usd_micro"] == _sonnet_cost(3, 400, 500, 20_000)
 
 
 class _BrokenStream(StubResponse):
@@ -167,7 +322,7 @@ def test_mid_stream_failure_closes_without_a_json_error(proxy: Proxy) -> None:
     conn.close()
     assert b"api_error" not in data
     assert API_KEY.encode() not in data
-    assert proxy.ledger.used("T-1") == 7  # usage seen before the failure is charged
+    assert proxy.ledger.used("T-1") == _sonnet_cost(7, 0)  # usage seen before the failure
 
 
 def test_upstream_error_body_is_redacted(proxy: Proxy) -> None:
@@ -180,7 +335,7 @@ def test_upstream_error_body_is_redacted(proxy: Proxy) -> None:
 
 def test_upstream_exception_is_generic_and_releases_reservation(proxy: Proxy) -> None:
     proxy.upstream.error = ConnectionError(f"failed with key {API_KEY} and {SECRET.decode()}")
-    status, _, data = proxy.post(request(), proxy.token(budget=100))
+    status, _, data = proxy.post(request(), proxy.token())
     assert status == 502
     assert API_KEY.encode() not in data
     assert SECRET not in data
@@ -195,6 +350,9 @@ def test_logs_are_metadata_only(proxy: Proxy) -> None:
     assert entry["task_id"] == "T-1"
     assert entry["model"] == "claude-sonnet-5-5"
     assert (entry["input_tokens"], entry["output_tokens"], entry["status"]) == (10, 5, 200)
+    assert entry["cost_usd_micro"] == entry["used_usd_micro"] == _sonnet_cost(10, 5)
+    assert entry["budget_usd_micro"] == 1_000_000
+    assert isinstance(entry["reserved_usd_micro"], int)
     dumped = json.dumps(proxy.logs)
     assert "PROMPT-CANARY-7f3a" not in dumped
     assert token not in dumped
