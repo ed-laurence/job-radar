@@ -257,8 +257,10 @@ Specified in `plan.md` "Sandboxing" and "Code review"; the jobs are provisioned 
 - **GitHub PRs** (`CODE_HOST=github`, docs/features/github-prs.md). `GitHubHost` snapshots GitHub
   `main` instead of the working tree. After the Publisher checks pass, it adds a publish commit
   carrying the trailers `agent-pr.yml` reads, and pushes it with the deploy key to
-  `agent/task-<card id>`, one branch per card and never forced. `agent-pr.yml` opens the PR.
-  `PrSyncTask`, started by the app lifespan, polls `gh pr list` (read-only, your gh login) every
+  `agent/task-<card id>-<run8>`, never forced. A fresh dev run pushes a new branch; a rework run
+  fast-forwards the card's `pr_branch`, so its PR updates. `agent-pr.yml` opens the PR and closes
+  the card's earlier attempts' PRs as superseded. `PrSyncTask`, started by the app lifespan,
+  polls `gh pr list` for each card's `pr_branch` (read-only, your gh login) every
   `PR_SYNC_INTERVAL_S`. It stores `pr_url`, moves a merged card from `human_review` to `done`,
   and labels a PR closed without merging `pr-closed`. `scripts/github-setup.sh` is the one-time
   setup.

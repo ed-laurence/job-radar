@@ -39,12 +39,16 @@ class Harness:
         column: Column,
         *,
         branch: str | None = "agent/scratch",
+        pr_branch: str | None = "",
         pr_url: str | None = None,
         labels: tuple[str, ...] = (),
     ) -> TaskRecord:
         self._next += 1
+        task_id = uuid.UUID(int=self._next)
+        if pr_branch == "":
+            pr_branch = github_branch(task_id, uuid.UUID(int=500 + self._next))
         task = TaskRecord(
-            id=uuid.UUID(int=self._next),
+            id=task_id,
             title=f"Card {self._next}",
             body="",
             column=column,
@@ -54,6 +58,7 @@ class Harness:
             created_at=AT,
             updated_at=AT,
             branch=branch,
+            pr_branch=pr_branch,
             pr_url=pr_url,
             labels=labels,
         )
@@ -62,7 +67,8 @@ class Harness:
 
     def pr(self, task: TaskRecord, state: PullRequestState, number: int = 7) -> PullRequest:
         found = PullRequest(url=f"{REPO_URL}{number}", number=number, state=state)
-        self.prs.put(github_branch(task.id), found)
+        assert task.pr_branch is not None
+        self.prs.put(task.pr_branch, found)
         return found
 
     def stored(self, task: TaskRecord) -> TaskRecord:
@@ -103,11 +109,22 @@ async def test_each_card_is_asked_about_its_own_github_branch(harness: Harness) 
 
     await harness.sync.sync(SYSTEM)
 
-    assert sorted(harness.prs.calls) == sorted([github_branch(first.id), github_branch(second.id)])
+    assert len(harness.prs.calls) == 2
+    assert set(harness.prs.calls) == {first.pr_branch, second.pr_branch}
+    assert first.pr_branch != second.pr_branch
+
+
+async def test_a_card_published_but_never_pushed_is_not_asked(harness: Harness) -> None:
+    await harness.card(Column.HUMAN_REVIEW, pr_branch=None)
+
+    summary = await harness.sync.sync(SYSTEM)
+
+    assert harness.prs.calls == []
+    assert summary.checked == 0
 
 
 async def test_cards_without_a_branch_or_in_other_columns_are_not_asked(harness: Harness) -> None:
-    await harness.card(Column.AGENT_DEV, branch=None)
+    await harness.card(Column.AGENT_DEV, branch=None, pr_branch=None)
     for column in (Column.BACKLOG, Column.READY, Column.BLOCKED, Column.DONE):
         await harness.card(column)
 
@@ -328,7 +345,7 @@ async def test_cards_past_the_cap_are_reached_by_the_next_pass(harness: Harness)
     await harness.sync.sync(SYSTEM)
 
     asked = set(harness.prs.calls)
-    assert asked == {github_branch(task.id) for task in cards}
+    assert asked == {task.pr_branch for task in cards}
 
 
 async def test_a_card_with_a_full_label_set_gets_the_url_but_no_label(harness: Harness) -> None:

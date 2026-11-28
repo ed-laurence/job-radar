@@ -378,10 +378,11 @@ def _apply_triage(task: TaskRecord, triage: TriageRecord) -> TaskRecord:
 
 
 def _published(task: TaskRecord, result: AgentResult) -> TaskRecord:
-    """A dev run's branch replaces the card's; a run that published none keeps the old one."""
+    """A dev run's branch replaces the card's; a run that published none keeps the old one.
+    Its GitHub branch replaces the card's too (None when it pushed nothing)."""
     if not result.branch:
         return task
-    return replace(task, branch=result.branch, base_sha=result.base_sha)
+    return replace(task, branch=result.branch, base_sha=result.base_sha, pr_branch=result.pr_branch)
 
 
 def _triage_outcome(triage: TriageRecord) -> str:

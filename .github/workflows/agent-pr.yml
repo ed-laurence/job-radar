@@ -9,6 +9,9 @@
 #   Jobradar-Verdict: pass
 #   Jobradar-Tests: <passed>/<total>
 #   Jobradar-Diff-Lines: <n>
+#
+# Branches are agent/task-<uuid>-<run8>: one per attempt. A fresh dev run on a card pushes a new
+# branch (nothing is force-pushed), so the card's earlier open PRs are closed as superseded.
 name: agent-pr
 
 on:
@@ -44,7 +47,7 @@ jobs:
           task="$(trailer Jobradar-Task)"; verdict="$(trailer Jobradar-Verdict)"
           tests="$(trailer Jobradar-Tests)"; lines="$(trailer Jobradar-Diff-Lines)"
           [[ "$task" =~ ^task-[0-9a-f-]{8,36}$ ]] || { echo "::error::missing or invalid Jobradar-Task trailer"; exit 1; }
-          [[ "$BRANCH" == "agent/$task" ]] || { echo "::error::branch does not match task id"; exit 1; }
+          [[ "$BRANCH" =~ ^agent/${task}-[0-9a-f]{8}$ ]] || { echo "::error::branch does not match task id"; exit 1; }
           [[ "$verdict" == "pass" ]] || { echo "::error::signer verdict is not pass"; exit 1; }
           [[ "$tests" =~ ^[0-9]{1,5}/[0-9]{1,5}$ ]] || tests="unknown"
           [[ "$lines" =~ ^[0-9]{1,5}$ ]] || lines="unknown"
@@ -52,6 +55,7 @@ jobs:
           # The card page is /dev-board/<task uuid> (the trailer is task-<uuid>).
           [[ "$APP_BASE_URL" =~ ^https://[A-Za-z0-9.-]+$ ]] && card="$APP_BASE_URL/dev-board/${task#task-}"
           {
+            echo "task=$task"
             echo "title=agent: $task"
             echo "body<<JR_EOF"
             echo "Automated PR from the Job Radar dev board."
@@ -83,3 +87,19 @@ jobs:
           else
             gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "$TITLE" --body "$BODY"
           fi
+
+      - name: Close the card's superseded PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+          TASK: ${{ steps.fields.outputs.task }}
+        run: |
+          set -euo pipefail
+          current="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          [[ -n "$current" ]] || exit 0
+          # Same card, earlier attempt: agent/<task>-<8 hex>, never this branch.
+          old="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,headRefName --jq ".[] | select(.headRefName | test(\"^agent/${TASK}-[0-9a-f]{8}$\")) | select(.headRefName != \"$BRANCH\") | .number")"
+          for number in $old; do
+            gh pr close "$number" --repo "$GITHUB_REPOSITORY" --comment "Superseded by #$current (a fresh agent run on the same card)."
+            echo "closed PR #$number (superseded by #$current)"
+          done

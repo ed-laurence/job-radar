@@ -93,6 +93,7 @@ from app.domain.ports.devboard import (
     TextRedactor,
     TriageDecision,
     github_branch,
+    is_github_branch,
 )
 
 __all__ = [
@@ -144,7 +145,7 @@ _SPACES = re.compile(r"\s+")
 class BranchPusher(Protocol):
     """`GitHubHost.push`: the publish commit on a checked scratch branch, pushed to GitHub."""
 
-    async def push(self, branch: str, trailers: PublishTrailers) -> PushedBranch: ...
+    async def push(self, branch: str, target: str, trailers: PublishTrailers) -> PushedBranch: ...
 
 
 @dataclass(frozen=True)
@@ -231,6 +232,17 @@ class _Workdir:
 
 def container_name(task_id: uuid.UUID, run_id: uuid.UUID) -> str:
     return f"jr-sandbox-{task_id.hex[:8]}-{run_id.hex[:8]}"
+
+
+def push_target(context: RunContext) -> str:
+    """The GitHub branch a done dev run pushes to. A rework run (it carries a review and the card
+    was pushed) fast-forwards the card's own branch, so its PR updates; any other run starts a
+    new attempt on a new branch, so nothing is ever force-pushed."""
+    task = context.task
+    pushed = task.pr_branch
+    if context.review is not None and pushed is not None and is_github_branch(task.id, pushed):
+        return pushed
+    return github_branch(task.id, context.run.id)
 
 
 def _mount(source: Path, target: str, *, readonly: bool = False) -> str:
@@ -655,22 +667,25 @@ class DockerAgentRunner:
             failed=tests.failed,
             diff_lines=changed_lines(checked),
         )
-        return await self._push(self._deps.pusher, result, (branch, trailers))
+        target = push_target(context)
+        return await self._push(self._deps.pusher, result, (branch, target, trailers))
 
     async def _push(
-        self, pusher: BranchPusher, result: SandboxResult, what: tuple[str, PublishTrailers]
+        self,
+        pusher: BranchPusher,
+        result: SandboxResult,
+        what: tuple[str, str, PublishTrailers],
     ) -> SandboxResult:
         """Push the checked branch. Failure fails the run (the scratch branch stays); the
         message is git's verb and exit code only. The count parts stay for the reviewer."""
-        branch, trailers = what
+        branch, target, trailers = what
         try:
-            pushed = await pusher.push(branch, trailers)
+            pushed = await pusher.push(branch, target, trailers)
         except (GitError, ValueError) as error:
-            target = github_branch(trailers.task_id)
             outcome = f"Could not push {target} to GitHub ({error}). {result.outcome}"
             return replace(result, is_success=False, outcome=outcome)
         note = f" Pushed {pushed.branch}; the PR opens from agent-pr.yml."
-        return replace(result, outcome=f"{result.outcome}{note}")
+        return replace(result, outcome=f"{result.outcome}{note}", pr_branch=pushed.branch)
 
     async def _check_branch(
         self, context: RunContext, branch: str, base_sha: str

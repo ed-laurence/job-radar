@@ -20,19 +20,27 @@ everything in the scratch remote, as before.
      Jobradar-Tests: <passed>/<passed+failed>
      Jobradar-Diff-Lines: <added+deleted, excluding regenerated code>
      ```
-4. **Push.** The publish commit is pushed to `agent/task-<task uuid>` (`github_branch(task_id)`).
-   There is one GitHub branch per card. A rework run starts from the card's head, so its push
-   fast-forwards and the same PR updates. Force-pushes are never used: a non-fast-forward push
-   fails the run.
+4. **Push.** Force-pushes are never used: a non-fast-forward push fails the run.
+   - A **fresh** dev run (from Ready, including a card sent back to Backlog and run again)
+     pushes a **new** branch, `agent/task-<task uuid>-<run8>` (`github_branch(task_id, run_id)`),
+     where `run8` is the first 8 hex digits of that run's id. Each attempt keeps its own branch
+     and PR.
+   - A **rework** run (from Changes requested) starts from the card's head and pushes to the
+     card's `pr_branch`, so the push fast-forwards and the same PR updates. A card that was
+     never pushed gets a new branch instead.
+   - The card stores the branch it pushed as `pr_branch` (`dev_tasks.pr_branch`).
+   - `GitHubHost.push` refuses any target that isn't `agent/task-<this card>-<8 hex>`.
    - The push uses `GIT_SSH_COMMAND="ssh -i <deploy key> -o IdentitiesOnly=yes -o
      UserKnownHostsFile=<pinned github.com key> -o StrictHostKeyChecking=yes"`.
    - It runs with no global git config, and error text holds only the verb and exit code.
    - A failed push fails the run. The scratch branch stays, so the card can be retried.
 5. **PR.** The push triggers `ci.yml` and `agent-pr.yml`. The workflow opens the PR with
-   `GITHUB_TOKEN`; its body comes from the trailers only.
+   `GITHUB_TOKEN`; its body comes from the trailers only. It then closes the card's other open
+   PRs (earlier attempts, `agent/task-<same uuid>-<8 hex>`) with a "Superseded by #N" comment.
 6. **PR sync (local poller).** Every `PR_SYNC_INTERVAL_S` (60), for live cards whose branch was
-   pushed (column in `agent_review`, `changes_requested`, `agent_dev`, `human_review`):
-   - The poller calls `PullRequests.find(github_branch(task.id))`. The adapter runs
+   pushed (`pr_branch` set) (column in `agent_review`, `changes_requested`, `agent_dev`, `human_review`):
+   - The poller calls `PullRequests.find(task.pr_branch)`; cards with no `pr_branch` are
+     skipped. The adapter runs
      `gh pr list --repo <GITHUB_REPO> --head <branch> --state all --json
      url,number,state,mergedAt --limit 1` using your gh login, read-only.
    - It stores `pr_url` on the card.

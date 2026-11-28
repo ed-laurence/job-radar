@@ -55,6 +55,7 @@ from app.domain.ports.devboard import (
     RunContext,
     RunTools,
     TriageDecision,
+    github_branch,
 )
 
 MAINTAINER = Actor(uuid.UUID(int=1), ActorKind.MAINTAINER, AppRole.MAINTAINER)
@@ -150,13 +151,16 @@ def unified_diff(*paths: str) -> str:
 @dataclass
 class ScriptedRunner:
     """Plans; dev runs publish a branch (to `branches`, changing `CHANGED`); review runs answer
-    from `reviews` in order (default: a clean review). Keeps every context it saw."""
+    from `reviews` in order (default: a clean review). Keeps every context it saw. With
+    `pushes` (CODE_HOST=github), a fresh dev run reports a new GitHub branch and a rework run
+    the card's own."""
 
     plan: PlanDraft = field(default_factory=draft)
     runs: list[RunKind] = field(default_factory=list[RunKind])
     reviews: list[AgentResult] = field(default_factory=list[AgentResult])
     seen: list[RunContext] = field(default_factory=list[RunContext])
     branches: FakeBranchViews = field(default_factory=FakeBranchViews)
+    pushes: bool = False
 
     async def run(self, context: RunContext, tools: RunTools) -> AgentResult:
         self.runs.append(context.run.kind)
@@ -168,12 +172,18 @@ class ScriptedRunner:
             branch = branch_name(context.run)
             text = unified_diff(CHANGED)
             self.branches.publish(BranchDiff(branch, BASE_SHA, 1, 1, 1, text), PATCH)
+            pr_branch = None
+            if self.pushes:
+                rework = context.review is not None and context.task.pr_branch is not None
+                own = github_branch(context.task.id, context.run.id)
+                pr_branch = context.task.pr_branch if rework else own
             return AgentResult(
                 is_success=True,
                 outcome="Bundle ready.",
                 cost_usd=1.0,
                 branch=branch,
                 base_sha=BASE_SHA,
+                pr_branch=pr_branch,
             )
         return AgentResult(is_success=True, outcome="Plan ready.", plan=self.plan, cost_usd=0.5)
 

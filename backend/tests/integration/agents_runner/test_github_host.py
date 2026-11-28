@@ -1,8 +1,9 @@
 """GitHubHost against real git, with a local bare repo standing in for GitHub (no network).
 
 Snapshot comes from the "GitHub" `main` (never the project's working tree); the publish commit
-carries the exact trailers agent-pr.yml reads; the push creates `agent/task-<id>`; a rework
-push fast-forwards; a diverged remote branch fails the push without forcing."""
+carries the exact trailers agent-pr.yml reads; the push creates `agent/task-<id>-<run8>`; a
+rework push fast-forwards the same branch; a diverged remote branch fails the push without
+forcing; only this card's agent branches are push targets."""
 
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ pytestmark = pytest.mark.integration
 TASK = uuid.UUID("11111111-2222-3333-4444-555555555555")
 RUN_1 = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 RUN_2 = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
+TARGET = github_branch(TASK, RUN_1)
 # agent-pr.yml's checks on the pushed head.
 WORKFLOW_TASK = re.compile(r"^task-[0-9a-f-]{8,36}$")
 WORKFLOW_TESTS = re.compile(r"^[0-9]{1,5}/[0-9]{1,5}$")
@@ -144,10 +146,10 @@ async def test_publish_commit_has_the_trailers_and_push_creates_the_card_branch(
     scratch = branch_name(TASK, RUN_1)
     published = await host.publish(result, f"agent/{TASK}", scratch, snapshot.base_sha)
 
-    pushed = await host.push(scratch, _trailers())
+    pushed = await host.push(scratch, TARGET, _trailers())
 
-    target = github_branch(TASK)
-    assert pushed.branch == target == f"agent/task-{TASK}"
+    target = TARGET
+    assert pushed.branch == target == f"agent/task-{TASK}-aaaaaaaa"
     remote_head = (await world.github_git("rev-parse", f"refs/heads/{target}")).strip()
     assert remote_head == pushed.sha
     # One commit on top of the agent's head, with the same tree.
@@ -165,7 +167,7 @@ async def test_publish_commit_has_the_trailers_and_push_creates_the_card_branch(
     # agent-pr.yml's own trailer reads and checks.
     task = await _workflow_trailer(world, remote_head, "Jobradar-Task")
     assert WORKFLOW_TASK.match(task)
-    assert target == f"agent/{task}"
+    assert target == f"agent/{task}-aaaaaaaa"
     assert await _workflow_trailer(world, remote_head, "Jobradar-Verdict") == "pass"
     tests = await _workflow_trailer(world, remote_head, "Jobradar-Tests")
     assert tests == "7/8"
@@ -190,16 +192,16 @@ async def test_a_rework_push_fast_forwards_the_same_branch(tmp_path: Path) -> No
     first = await _agent_edits(tmp_path, world.env, snapshot.bundle, "print('one')\n")
     scratch_1 = branch_name(TASK, RUN_1)
     await host.publish(first, f"agent/{TASK}", scratch_1, snapshot.base_sha)
-    pushed_1 = await host.push(scratch_1, _trailers())
+    pushed_1 = await host.push(scratch_1, TARGET, _trailers())
 
     # Rework: the input is the card's scratch branch head (as LocalGitHost does today).
     rework_in = await host.bundle_branch(scratch_1, snapshot.base_sha, tmp_path / "rw.bundle")
     second = await _agent_edits(tmp_path, world.env, rework_in.bundle, "print('two')\n")
     scratch_2 = branch_name(TASK, RUN_2)
     await host.publish(second, f"agent/{TASK}", scratch_2, snapshot.base_sha)
-    pushed_2 = await host.push(scratch_2, _trailers(passed=8, failed=0, lines=4))
+    pushed_2 = await host.push(scratch_2, TARGET, _trailers(passed=8, failed=0, lines=4))
 
-    head = (await world.github_git("rev-parse", f"refs/heads/{github_branch(TASK)}")).strip()
+    head = (await world.github_git("rev-parse", f"refs/heads/{TARGET}")).strip()
     assert head == pushed_2.sha != pushed_1.sha
     await world.github_git("merge-base", "--is-ancestor", pushed_1.sha, head)
     assert await _workflow_trailer(world, head, "Jobradar-Tests") == "8/8"
@@ -213,23 +215,23 @@ async def test_a_diverged_remote_branch_fails_the_push_without_forcing(tmp_path:
     first = await _agent_edits(tmp_path, world.env, snapshot.bundle, "print('one')\n")
     scratch_1 = branch_name(TASK, RUN_1)
     await host.publish(first, f"agent/{TASK}", scratch_1, snapshot.base_sha)
-    await host.push(scratch_1, _trailers())
+    await host.push(scratch_1, TARGET, _trailers())
     # Someone else moves the GitHub branch.
     other = tmp_path / "other"
-    target = github_branch(TASK)
+    target = TARGET
     await _git(tmp_path, world.env, "clone", "-q", "-b", target, str(world.github), str(other))
     (other / "app.py").write_text("print('someone else')\n", encoding="utf-8")
     await _git(other, world.env, "commit", "-q", "-am", "diverge")
     await _git(other, world.env, "push", "-q", "origin", target)
     moved = (await world.github_git("rev-parse", f"refs/heads/{target}")).strip()
 
-    # A fresh (non-rework) run from main: its push is not a fast-forward.
-    fresh_in = await host.snapshot(tmp_path / "fresh.bundle")
-    second = await _agent_edits(tmp_path, world.env, fresh_in.bundle, "print('fresh')\n")
+    # A rework from the card's own head: the moved GitHub branch is no ancestor of it.
+    rework_in = await host.bundle_branch(scratch_1, snapshot.base_sha, tmp_path / "rw.bundle")
+    second = await _agent_edits(tmp_path, world.env, rework_in.bundle, "print('rework')\n")
     scratch_2 = branch_name(TASK, RUN_2)
-    await host.publish(second, f"agent/{TASK}", scratch_2, fresh_in.base_sha)
+    await host.publish(second, f"agent/{TASK}", scratch_2, snapshot.base_sha)
     with pytest.raises(GitError) as raised:
-        await host.push(scratch_2, _trailers())
+        await host.push(scratch_2, target, _trailers())
 
     assert str(raised.value) == "git push failed (exit 1)"
     assert (await world.github_git("rev-parse", f"refs/heads/{target}")).strip() == moved
@@ -258,7 +260,47 @@ async def test_a_missing_deploy_key_fails_before_any_git_call(tmp_path: Path) ->
     assert not (world.remote / "refs" / "remotes").exists()
 
 
+async def test_a_fresh_run_pushes_a_new_branch_and_leaves_the_old_one(tmp_path: Path) -> None:
+    world = World(tmp_path)
+    await world.init()
+    host = world.host()
+    snapshot = await host.snapshot(tmp_path / "in.bundle")
+    first = await _agent_edits(tmp_path, world.env, snapshot.bundle, "print('one')\n")
+    scratch_1 = branch_name(TASK, RUN_1)
+    await host.publish(first, f"agent/{TASK}", scratch_1, snapshot.base_sha)
+    pushed_1 = await host.push(scratch_1, TARGET, _trailers())
+
+    fresh_in = await host.snapshot(tmp_path / "fresh.bundle")
+    second = await _agent_edits(tmp_path, world.env, fresh_in.bundle, "print('fresh')\n")
+    scratch_2 = branch_name(TASK, RUN_2)
+    await host.publish(second, f"agent/{TASK}", scratch_2, fresh_in.base_sha)
+    fresh_target = github_branch(TASK, RUN_2)
+    pushed_2 = await host.push(scratch_2, fresh_target, _trailers())
+
+    assert pushed_2.branch == fresh_target != TARGET
+    assert (await world.github_git("rev-parse", f"refs/heads/{TARGET}")).strip() == pushed_1.sha
+    head = (await world.github_git("rev-parse", f"refs/heads/{fresh_target}")).strip()
+    assert head == pushed_2.sha
+
+
 async def test_push_only_takes_agent_branches(tmp_path: Path) -> None:
     world = World(tmp_path)
     with pytest.raises(ValueError, match="branch"):
-        await world.host().push("main", _trailers())
+        await world.host().push("main", TARGET, _trailers())
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "main",
+        f"agent/task-{TASK}",
+        f"agent/task-{uuid.UUID(int=9)}-aaaaaaaa",
+        f"agent/task-{TASK}-AAAAAAAA",
+        f"agent/task-{TASK}-aaaaaaaa/x",
+        f"refs/heads/agent/task-{TASK}-aaaaaaaa",
+    ],
+)
+async def test_push_only_targets_this_cards_github_branches(tmp_path: Path, target: str) -> None:
+    world = World(tmp_path)
+    with pytest.raises(ValueError, match="target"):
+        await world.host().push(branch_name(TASK, RUN_1), target, _trailers())

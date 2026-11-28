@@ -24,7 +24,6 @@ from app.domain.ports.devboard import (
     PullRequests,
     PullRequestState,
     TaskStore,
-    github_branch,
 )
 
 MAX_CARDS_PER_PASS = 50
@@ -73,8 +72,8 @@ class PrSyncService:
         found: list[tuple[uuid.UUID, PullRequest | None]] = []
         try:
             for task in page:
-                if task.branch:
-                    found.append((task.id, await self._pull_requests.find(github_branch(task.id))))
+                if task.pr_branch:
+                    found.append((task.id, await self._pull_requests.find(task.pr_branch)))
         except UpstreamUnavailable as error:
             return PrSyncSummary(checked=len(found), failure=error.detail or "GitHub unavailable")
         self._offset = self._offset + len(page) if len(page) == MAX_CARDS_PER_PASS else 0
