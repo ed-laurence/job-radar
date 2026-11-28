@@ -17,17 +17,34 @@ export const RUN_STARTING_TARGETS: readonly TaskColumn[] = ["plan_review", "agen
 
 const OUT_OF_SCOPE_TARGETS: readonly TaskColumn[] = ["out_of_scope", "backlog", "blocked"];
 
+/** What the drop rules need from a card: its column and, from the API, where the caller may move it. */
+export type Draggable = { column: TaskColumn; allowed_columns?: readonly TaskColumn[] };
+
 /**
- * Whether the UI disables a drop target up front. Only moves the spec rules out for certain are
- * locked (maintainer-only targets for a known `user`, out-of-scope cards); the server's state
- * machine decides everything else and a 422 explains it.
+ * Whether the UI disables a drop target up front. Cards from the API carry `allowed_columns`
+ * (the server's state machine for the caller's role), which decides. Without it only the moves
+ * the spec rules out for certain are locked (maintainer-only targets for a known `user`,
+ * out-of-scope cards) and the server's 422 explains the rest.
  */
 export function isTargetLocked(
-  task: { column: TaskColumn },
+  task: Draggable,
   to: TaskColumn,
   role: AppRole | undefined,
 ): boolean {
   if (to === task.column) return false;
+  if (task.allowed_columns) return !task.allowed_columns.includes(to);
   if (task.column === "out_of_scope" && !OUT_OF_SCOPE_TARGETS.includes(to)) return true;
   return role === "user" && MAINTAINER_TARGETS.includes(to);
+}
+
+/** How a column looks while a card is dragged: idle (no drag), a legal target, or locked. */
+export type DropState = "idle" | "valid" | "invalid";
+
+export function dropStateFor(
+  dragged: Draggable | undefined,
+  to: TaskColumn,
+  role: AppRole | undefined,
+): DropState {
+  if (!dragged) return "idle";
+  return isTargetLocked(dragged, to, role) ? "invalid" : "valid";
 }

@@ -46,11 +46,19 @@ def test_paths_are_concrete(raw: str) -> None:
         normalise(raw)
 
 
-def test_risk_map_most_specific_wins_and_hotspots_are_high() -> None:
+def test_risk_map_most_specific_wins_and_shared_web_code_is_high() -> None:
     assert path_risk("web/src/features/board/") is Risk.LOW
     assert path_risk("backend/src/app/domain/x.py") is Risk.MEDIUM
     assert path_risk("web/src/lib/api/client.ts") is Risk.HIGH
     assert path_risk("web/src/") is Risk.HIGH  # contains the web/src/lib hotspot
+
+
+def test_contract_and_generated_code_are_medium() -> None:
+    # Contract edits are already serialised (hotspot lock), planned as their own subtask and
+    # covered by contract tests, so they don't make a card high risk on their own.
+    assert path_risk("api/openapi.yaml") is Risk.MEDIUM
+    assert path_risk("backend/src/app/generated/models.py") is Risk.MEDIUM
+    assert path_risk("web/src/lib/api/generated/schema.d.ts") is Risk.MEDIUM
 
 
 @pytest.fixture

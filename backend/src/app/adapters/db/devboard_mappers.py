@@ -1,4 +1,10 @@
-"""Row <-> record mapping for the dev-board Postgres adapters."""
+"""Row <-> record mapping for the dev-board Postgres adapters.
+
+Triage rows from before migration 0008 have no priority, severity, route or verification. They
+map to the most cautious reading: P3 / minor, route `next` (no automatic planning), and an
+`unclear` verification with no evidence. Their old acceptance criteria are not read: the
+planner writes criteria now (`task_plans.acceptance_criteria`).
+"""
 
 from __future__ import annotations
 
@@ -17,10 +23,13 @@ from app.domain.devboard.model import (
     LeaseKind,
     LeaseRecord,
     PlanRecord,
+    Priority,
     Risk,
+    Route,
     RunKind,
     RunRecord,
     RunStatus,
+    Severity,
     Size,
     StepKind,
     StepRecord,
@@ -28,10 +37,16 @@ from app.domain.devboard.model import (
     TaskRecord,
     TaskType,
     TriageRecord,
+    Verification,
+    VerificationStatus,
 )
 from app.domain.identity import AppRole
 
 ACTIVE_STATUSES = ("queued", "running")
+# Pre-0008 triage rows (see the module docstring).
+LEGACY_PRIORITY = Priority.P3
+LEGACY_SEVERITY = Severity.MINOR
+LEGACY_ROUTE = Route.NEXT
 
 
 def money(value: float) -> Decimal:
@@ -84,6 +99,9 @@ def task_record(row: Row[DevTask, str, uuid.UUID]) -> TaskRecord:
         areas=tuple(Area(area) for area in task.areas),
         labels=tuple(task.labels),
         needs_human_design=task.needs_human_design,
+        priority=Priority(task.priority) if task.priority else None,
+        severity=Severity(task.severity) if task.severity else None,
+        route=Route(task.route) if task.route else None,
         out_of_scope_reason=task.out_of_scope_reason,
         blocked_reason=task.blocked_reason,
         blocked_from=Column(task.blocked_from_column) if task.blocked_from_column else None,
@@ -107,6 +125,9 @@ def task_values(task: TaskRecord) -> dict[str, object]:
         "areas": [area.value for area in task.areas],
         "labels": list(task.labels),
         "needs_human_design": task.needs_human_design,
+        "priority": task.priority.value if task.priority else None,
+        "severity": task.severity.value if task.severity else None,
+        "route": task.route.value if task.route else None,
         "out_of_scope_reason": task.out_of_scope_reason,
         "pii_redacted": task.pii_redacted,
         "pr_url": task.pr_url,
@@ -114,18 +135,44 @@ def task_values(task: TaskRecord) -> dict[str, object]:
     }
 
 
+def verification_record(value: dict[str, object] | None) -> Verification:
+    if value is None:
+        return Verification(status=VerificationStatus.UNCLEAR, evidence="")
+    status = str(value.get("status", ""))
+    duplicate_of = value.get("duplicate_of")
+    return Verification(
+        status=VerificationStatus(status)
+        if status in set(VerificationStatus)
+        else VerificationStatus.UNCLEAR,
+        evidence=str(value.get("evidence") or ""),
+        code_refs=strings(value.get("code_refs")),
+        duplicate_of=uuid.UUID(duplicate_of) if isinstance(duplicate_of, str) else None,
+    )
+
+
+def verification_values(verification: Verification) -> dict[str, object]:
+    return {
+        "status": verification.status.value,
+        "evidence": verification.evidence,
+        "code_refs": list(verification.code_refs),
+        "duplicate_of": str(verification.duplicate_of) if verification.duplicate_of else None,
+    }
+
+
 def triage_record(row: TaskTriage) -> TriageRecord:
-    criteria = [fields for fields in map(fields, row.acceptance_criteria) if fields is not None]
     return TriageRecord(
         task_id=row.task_id,
         type=TaskType(row.type or "feature"),
         size=Size(row.size or "M"),
         risk=Risk(row.risk or "medium"),
         areas=tuple(Area(area) for area in row.areas),
-        criteria=tuple(
-            Criterion(str(item.get("test_id", "")), str(item.get("expectation", "")))
-            for item in criteria
-        ),
+        priority=Priority(row.priority) if row.priority else LEGACY_PRIORITY,
+        severity=Severity(row.severity) if row.severity else LEGACY_SEVERITY,
+        impact=row.impact or "",
+        route=Route(row.route) if row.route else LEGACY_ROUTE,
+        route_reason=row.route_reason or "",
+        verification=verification_record(row.verification),
+        likely_paths=tuple(row.likely_paths or ()),
         needs_human_design=row.needs_human_design,
         in_scope=row.in_scope,
         out_of_scope_reason=row.out_of_scope_reason,
@@ -135,8 +182,32 @@ def triage_record(row: TaskTriage) -> TriageRecord:
     )
 
 
+def triage_values(triage: TriageRecord) -> dict[str, object]:
+    return {
+        "task_id": triage.task_id,
+        "type": triage.type.value,
+        "size": triage.size.value,
+        "risk": triage.risk.value,
+        "areas": [area.value for area in triage.areas],
+        "priority": triage.priority.value,
+        "severity": triage.severity.value,
+        "impact": triage.impact,
+        "route": triage.route.value,
+        "route_reason": triage.route_reason,
+        "verification": verification_values(triage.verification),
+        "likely_paths": list(triage.likely_paths),
+        "needs_human_design": triage.needs_human_design,
+        "in_scope": triage.in_scope,
+        "out_of_scope_reason": triage.out_of_scope_reason,
+        "model": triage.model,
+        "provider": triage.provider,
+        "created_at": triage.created_at,
+    }
+
+
 def plan_record(row: TaskPlan) -> PlanRecord:
     subtasks = [fields for fields in map(fields, row.subtasks) if fields is not None]
+    criteria = [fields for fields in map(fields, row.acceptance_criteria) if fields is not None]
     return PlanRecord(
         id=row.id,
         task_id=row.task_id,
@@ -154,6 +225,11 @@ def plan_record(row: TaskPlan) -> PlanRecord:
             for item in subtasks
         ),
         acceptance_tests=tuple(row.acceptance_tests),
+        tests_to_change=tuple(row.tests_to_change),
+        acceptance_criteria=tuple(
+            Criterion(str(item.get("test_id", "")), str(item.get("expectation", "")))
+            for item in criteria
+        ),
         budget_usd=float(row.budget_usd),
         budget_minutes=row.budget_minutes,
         risk=Risk(row.risk),
@@ -179,6 +255,10 @@ def plan_values(plan: PlanRecord) -> dict[str, object]:
             for s in plan.subtasks
         ],
         "acceptance_tests": list(plan.acceptance_tests),
+        "tests_to_change": list(plan.tests_to_change),
+        "acceptance_criteria": [
+            {"test_id": c.test_id, "expectation": c.expectation} for c in plan.acceptance_criteria
+        ],
         "budget_usd": money(plan.budget_usd),
         "budget_minutes": plan.budget_minutes,
         "risk": plan.risk.value,

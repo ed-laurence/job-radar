@@ -3,8 +3,9 @@ becomes an ordinary task edit (spec `acceptTaskChatProposal`).
 
 A card has a title and a body. In chat the body is two fields: the description, and the
 written acceptance criteria, which are the bullets under a `## Acceptance criteria` heading at
-the end of the body. Triage reads both and turns the criteria into executable test ids. On
-accept the body is rebuilt from the two, so the card stays one plain text field.
+the end of the body. Triage reads both to verify, prioritise and route the card; the planner
+turns the criteria into executable test ids. On accept the body is rebuilt from the two, so the
+card stays one plain text field.
 """
 
 from __future__ import annotations

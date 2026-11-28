@@ -28,15 +28,20 @@ from app.domain.devboard.model import (
     Column,
     Criterion,
     PlanRecord,
+    Priority,
     Risk,
+    Route,
     RunKind,
     RunRecord,
     RunStatus,
+    Severity,
     Size,
     Subtask,
     TaskRecord,
     TaskType,
     TriageRecord,
+    Verification,
+    VerificationStatus,
 )
 from app.domain.devboard.runs import RunService
 from app.guards.redaction import Redactor
@@ -89,6 +94,9 @@ class Harness:
         body: str = "Add an empty state to the contacts list.",
         column: Column = Column.AGENT_DEV,
         with_plan: bool = True,
+        with_triage: bool = True,
+        labels: tuple[str, ...] = (),
+        tests_to_change: tuple[str, ...] = (),
     ) -> TaskRecord:
         now = self.clock.now()
         task = TaskRecord(
@@ -105,6 +113,7 @@ class Harness:
             size=Size.S,
             risk=Risk.LOW,
             areas=(Area.WEB,),
+            labels=labels,
         )
         await self.tasks.insert(owner, task)
         criteria = (Criterion("web/src/features/contacts/empty.test.tsx::shows", "Shows it."),)
@@ -114,14 +123,26 @@ class Harness:
             size=Size.S,
             risk=Risk.LOW,
             areas=(Area.WEB,),
-            criteria=criteria,
+            priority=Priority.P2,
+            severity=Severity.MINOR,
+            impact="Users with no contacts see a blank list.",
+            route=Route.NOW,
+            route_reason="Small, self-contained web change.",
+            verification=Verification(
+                status=VerificationStatus.CONFIRMED,
+                evidence="The contacts list renders nothing when empty.",
+                code_refs=("web/src/features/",),
+            ),
+            likely_paths=("web/src/features/contacts/ContactList.tsx",),
             needs_human_design=False,
             in_scope=True,
             created_at=now,
         )
-        await self.tasks.add_triage(owner, triage)
+        if with_triage:
+            await self.tasks.add_triage(owner, triage)
         if with_plan:
             plan = PlanRecord(
+                tests_to_change=tests_to_change,
                 id=self.ids.new_id(),
                 task_id=task.id,
                 version=1,
@@ -135,6 +156,7 @@ class Harness:
                 budget_minutes=30,
                 risk=Risk.LOW,
                 created_at=now,
+                acceptance_criteria=criteria,
                 tests_approved_at=now,
                 plan_approved_at=now,
             )
@@ -148,11 +170,12 @@ class Harness:
         agent: str = "frontend-engineer",
         status: RunStatus = RunStatus.RUNNING,
         parent: uuid.UUID | None = None,
+        kind: RunKind = RunKind.DEV,
     ) -> RunRecord:
         run = RunRecord(
             id=self.ids.new_id(),
             task_id=task.id,
-            kind=RunKind.DEV,
+            kind=kind,
             status=status,
             created_at=self.clock.now(),
             parent_run_id=parent,

@@ -5639,6 +5639,64 @@ components:
       - web
       - api
       maxLength: 3
+    TaskPriority:
+      type: string
+      description: P0 drop everything, P1 this milestone, P2 soon, P3 whenever.
+      enum:
+      - P0
+      - P1
+      - P2
+      - P3
+      maxLength: 2
+    TaskSeverity:
+      type: string
+      description: User impact and blast radius.
+      enum:
+      - critical
+      - major
+      - minor
+      - trivial
+      maxLength: 8
+    TriageRoute:
+      type: string
+      description: '`now` starts planning straight away; `next` waits at the top of Triaged; `later` at the bottom.'
+      enum:
+      - now
+      - next
+      - later
+      maxLength: 5
+    TriageVerification:
+      type: object
+      description: How triage checked the issue against the repo (read-only) and the open cards.
+      required:
+      - status
+      - evidence
+      - code_refs
+      properties:
+        status:
+          type: string
+          enum:
+          - confirmed
+          - not_reproduced
+          - unclear
+          - duplicate
+          maxLength: 14
+        evidence:
+          type: string
+          maxLength: 1000
+          description: What was read or run, and what it showed.
+        duplicate_of:
+          type: string
+          format: uuid
+          maxLength: 36
+          description: The open card this one duplicates (status `duplicate` only).
+        code_refs:
+          type: array
+          items:
+            type: string
+            maxLength: 300
+          maxItems: 20
+          description: Existing repo paths the issue concerns. Every one exists in the repo.
     Task:
       type: object
       description: Dev-board card. The board is shared between both accounts (no per-user rows).
@@ -5679,11 +5737,13 @@ components:
           enum:
           - feature
           - bug
+          - security
+          - performance
           - chore
           - refactor
           - test
           - docs
-          maxLength: 8
+          maxLength: 11
         size:
           type: string
           enum:
@@ -5712,6 +5772,20 @@ components:
           maxItems: 20
         needs_human_design:
           type: boolean
+        priority:
+          $ref: '#/components/schemas/TaskPriority'
+        severity:
+          $ref: '#/components/schemas/TaskSeverity'
+        route:
+          $ref: '#/components/schemas/TriageRoute'
+        allowed_columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskColumn'
+          maxItems: 11
+          uniqueItems: true
+          description: The columns the caller may move this card to now (its own column excluded), from the server's
+            state machine and the caller's role. A move to `ready` also needs an approved plan.
         out_of_scope_reason:
           type: string
           maxLength: 1000
@@ -5928,7 +6002,12 @@ components:
       - size
       - risk
       - areas
-      - acceptance_criteria
+      - priority
+      - severity
+      - impact
+      - route
+      - route_reason
+      - verification
       - needs_human_design
       - in_scope
       - created_at
@@ -5942,11 +6021,13 @@ components:
           enum:
           - feature
           - bug
+          - security
+          - performance
           - chore
           - refactor
           - test
           - docs
-          maxLength: 8
+          maxLength: 11
         size:
           type: string
           enum:
@@ -5967,11 +6048,29 @@ components:
             $ref: '#/components/schemas/TaskArea'
           maxItems: 2
           uniqueItems: true
-        acceptance_criteria:
+        priority:
+          $ref: '#/components/schemas/TaskPriority'
+        severity:
+          $ref: '#/components/schemas/TaskSeverity'
+        impact:
+          type: string
+          maxLength: 600
+          description: User impact, blast radius and any deadline behind the priority.
+        route:
+          $ref: '#/components/schemas/TriageRoute'
+        route_reason:
+          type: string
+          maxLength: 400
+        verification:
+          $ref: '#/components/schemas/TriageVerification'
+        likely_paths:
           type: array
           items:
-            $ref: '#/components/schemas/AcceptanceCriterion'
+            type: string
+            maxLength: 300
           maxItems: 30
+          description: Repo paths triage expects the change to touch (each in the repo, or a new file in an existing
+            directory). They set risk and scope, and the planner starts from them.
         needs_human_design:
           type: boolean
         in_scope:
@@ -6041,7 +6140,9 @@ components:
       - version
       - mode
       - subtasks
+      - acceptance_criteria
       - acceptance_tests
+      - tests_to_change
       - budget
       - risk
       - tests_approved
@@ -6067,6 +6168,13 @@ components:
           items:
             $ref: '#/components/schemas/Subtask'
           maxItems: 20
+        acceptance_criteria:
+          type: array
+          items:
+            $ref: '#/components/schemas/AcceptanceCriterion'
+          maxItems: 30
+          description: Written by the planner against the repo (triage writes none). Each test id names an existing
+            test file, or a new one in a directory that exists.
         acceptance_tests:
           type: array
           items:
@@ -6074,6 +6182,14 @@ components:
             maxLength: 300
           maxItems: 50
           description: Frozen failing test ids written by the test-only step.
+        tests_to_change:
+          type: array
+          items:
+            type: string
+            maxLength: 300
+          maxItems: 50
+          description: Existing test files the plan has to edit (existing tests are read-only otherwise). Approving with
+            `allow_test_changes` adds the matching `modify-tests:` label.
         budget:
           type: object
           required:
@@ -6143,6 +6259,10 @@ components:
         approve_plan:
           type: boolean
           const: true
+        allow_test_changes:
+          type: boolean
+          description: Required (true) when the plan lists `tests_to_change` not already covered by a `modify-tests:`
+            label; adds that label. 422 otherwise.
         rank:
           type: string
           maxLength: 64

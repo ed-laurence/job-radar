@@ -55,8 +55,8 @@ TOOLS = (
     ),
     ToolSpec(
         GET_TRIAGE,
-        "Read the card's latest triage: type, size, risk, areas, scope and executable "
-        "acceptance criteria.",
+        "Read the card's latest triage: type, size, risk, areas, scope, priority, severity, "
+        "route and how the issue was verified.",
         _NO_INPUT,
     ),
     ToolSpec(
@@ -98,13 +98,18 @@ def triage_text(triage: TriageRecord | None) -> str:
         return "Not triaged yet."
     areas = "+".join(area.value for area in triage.areas) or "none"
     scope = "in scope" if triage.in_scope else f"out of scope: {triage.out_of_scope_reason}"
+    verification = triage.verification
     lines = [
         f"{triage.type.value}, size {triage.size.value}, risk {triage.risk.value}, "
         f"areas {areas}, {scope}.",
+        f"Priority {triage.priority.value}, severity {triage.severity.value}; "
+        f"route {triage.route.value}: {triage.route_reason or '(no reason)'}",
+        f"Impact: {triage.impact or '(not stated)'}",
+        f"Verification: {verification.status.value}. {verification.evidence}".strip(),
         f"Needs a human design decision: {'yes' if triage.needs_human_design else 'no'}.",
-        "Executable acceptance criteria:",
-        *[f"- {item.test_id}: {item.expectation}" for item in triage.criteria],
     ]
+    if verification.code_refs:
+        lines.append(f"Code it concerns: {', '.join(verification.code_refs)}")
     return _clip("\n".join(lines))
 
 
@@ -120,6 +125,11 @@ def plan_text(plan: PlanRecord | None) -> str:
             f"- {sub.title} ({sub.agent}; paths: {', '.join(sub.lease_paths) or 'none'})"
             for sub in plan.subtasks
         ],
+        "Acceptance criteria (written by the planner):",
+        *(
+            [f"- {item.test_id}: {item.expectation}" for item in plan.acceptance_criteria]
+            or ["(none)"]
+        ),
         "Acceptance tests:",
         *([f"- {test}" for test in plan.acceptance_tests] or ["(none yet)"]),
     ]

@@ -1,4 +1,4 @@
-"""DockerAgentRunner: the dev run in the local writer sandbox (`AGENT_SANDBOX=docker`).
+"""DockerAgentRunner: dev, plan and triage runs in the local writer sandbox (AGENT_SANDBOX=docker).
 
 Per run: snapshot the working tree (LocalGitHost), mint a task-scoped `jrt2` llm-proxy token
 (budget = the plan's USD budget) and a coordinator token, `docker run` the writer image with
@@ -12,8 +12,17 @@ ask llm-proxy what the run spent, and keep the run's logs in `.artifacts/agent-r
   only in llm-proxy's env.
 - A failed handoff's summary (untrusted: one line, capped, redacted) is the run's outcome, which
   the card shows as the blocked reason. A successful outcome is built from counts only.
-- Plan runs (read-only dev-lead) go to `planner` (the simulation until a sandboxed dev-lead
-  exists). Dev runs are labelled with the sandbox's role, `writer` (`labels`).
+- Plan runs (the dev-lead, `AGENT_MODE=plan`) use the same image, hardening and env. There is
+  no plan yet, so the budget and wall clock come from config (`plan_budget_usd`,
+  `plan_timeout_s`). Nothing is published: the result is `/out/plan.json`, read strictly
+  (`plan_file`) into the draft, which the domain then checks (`finalise_draft`). With a
+  `planner` in the deps (AGENT_PLANNER=simulation), plan runs stay on it instead.
+- Triage runs (the read-only triager, `AGENT_MODE=triage`) work like plan runs: budget, wall
+  clock and model from config (`triage_*`), nothing published, `/out/triage.json` read strictly
+  (`triage_file`) into `SandboxResult.triage`. `DockerTriageAgent` (`docker_triage`) guards the
+  card first and turns the result into the `TriageAgent` port's decision.
+- Dev runs are labelled with the sandbox's role, `writer`; sandboxed plan runs `dev-lead`,
+  triage runs `triage`.
 """
 
 from __future__ import annotations
@@ -32,6 +41,7 @@ from pathlib import Path
 from typing import Literal
 
 from app.adapters.agents.handoff import Handoff, HandoffError, read_handoff
+from app.adapters.agents.plan_file import PlanFileError, read_plan
 from app.adapters.agents.process import ProcessRunner
 from app.adapters.agents.sandbox_spec import (
     DOCKER_CLI_ENV,
@@ -46,9 +56,10 @@ from app.adapters.agents.tokens import (
     mint_llm_proxy_budget_token,
     usd_to_micro,
 )
+from app.adapters.agents.triage_file import TriageFileError, read_triage
 from app.adapters.agents.usage import ProxyUsage, UsageProbe
 from app.adapters.codehost.local_git import CodeHost, DiffStat, GitError, Snapshot, branch_name
-from app.domain.devboard.model import PlanRecord, RunKind
+from app.domain.devboard.model import RunKind
 from app.domain.errors import DomainError
 from app.domain.ports.devboard import (
     AgentResult,
@@ -56,6 +67,7 @@ from app.domain.ports.devboard import (
     RunContext,
     RunTools,
     TextRedactor,
+    TriageDecision,
 )
 
 __all__ = [
@@ -73,12 +85,17 @@ __all__ = [
 
 # The role the sandbox plays; the card shows it as the dev run's agent.
 AGENT_ROLE = "writer"
+# The sandboxed plan run's label (the read-only dev-lead) and its sandbox mode.
+PLANNER_ROLE = "dev-lead"
+PLAN_MODE = "plan"
+TRIAGE_ROLE = "triage"
+TRIAGE_MODE = "triage"
 # Where a run's logs are kept, relative to the repo (shown on the card when there's no handoff).
 ARTIFACTS_HINT = "see .artifacts/agent-runs/{run_id}/"
 # The llm-proxy token outlives the wall clock a little, so the spend can still be read after a
 # timeout kill. The container is gone by then; the token is task-scoped and budgeted.
 USAGE_GRACE_S = 300
-KEPT_FILES = ("handoff.json", "agent.log", "steps.jsonl")
+KEPT_FILES = ("handoff.json", "plan.json", "triage.json", "agent.log", "steps.jsonl")
 RUNNER_LOG = "runner.log"
 MAX_KEPT_BYTES = 256 * 1024
 MAX_RUNNER_LOG_BYTES = 64 * 1024
@@ -94,7 +111,8 @@ class SandboxDeps:
     host: CodeHost
     processes: ProcessRunner
     coordinator_tokens: CoordinatorTokens
-    planner: AgentRunner
+    # Runs plan runs instead of the sandbox (the simulation); None plans in the sandbox.
+    planner: AgentRunner | None = None
     # llm-proxy `GET /v1/usage`; None means the spend is always unknown.
     usage: UsageProbe | None = None
     # Redacts the handoff reason and kept artifacts; None leaves only the token scrub.
@@ -110,9 +128,21 @@ class SandboxResult(AgentResult):
     handoff: Handoff | None = None
     # llm-proxy's answer; None when it was unreachable (the spend is unknown, not zero).
     spend: ProxyUsage | None = None
+    # A triage run's decision (`/out/triage.json`); None for other runs and on failure.
+    triage: TriageDecision | None = None
 
 
 type Stop = Literal["timeout", "cancelled"] | None
+
+
+@dataclass(frozen=True)
+class _Budget:
+    usd: float
+    timeout_s: int
+    # `AGENT_MODE` for the sandbox; None keeps its default (the dev agent).
+    mode: str | None = None
+    # `AGENT_MODEL` for the sandbox; None keeps the sandbox's default for the mode.
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -181,55 +211,85 @@ class DockerAgentRunner:
     @property
     def labels(self) -> Mapping[RunKind, str]:
         """The agent label of each run kind this runner executes itself."""
-        return {RunKind.DEV: AGENT_ROLE}
+        labels = {RunKind.DEV: AGENT_ROLE, RunKind.TRIAGE: TRIAGE_ROLE}
+        if self._deps.planner is None:
+            labels[RunKind.PLAN] = PLANNER_ROLE
+        return labels
 
     async def run(self, context: RunContext, tools: RunTools) -> AgentResult:
+        if context.run.kind is RunKind.TRIAGE:
+            budget = _Budget(
+                usd=self._config.triage_budget_usd,
+                timeout_s=self._cap(self._config.triage_timeout_s),
+                mode=TRIAGE_MODE,
+                model=self._config.triage_model,
+            )
+            return await self._in_workdir(context, tools, budget)
         if context.run.kind is RunKind.PLAN:
-            return await self._deps.planner.run(context, tools)
+            if self._deps.planner is not None:
+                return await self._deps.planner.run(context, tools)
+            budget = _Budget(
+                usd=self._config.plan_budget_usd,
+                timeout_s=self._cap(self._config.plan_timeout_s),
+                mode=PLAN_MODE,
+            )
+            return await self._in_workdir(context, tools, budget)
         plan = context.plan
         if plan is None or not plan.is_approved:
             return SandboxResult(is_success=False, outcome="No approved plan.")
+        budget = _Budget(usd=plan.budget_usd, timeout_s=self._cap(plan.budget_minutes * 60))
+        return await self._in_workdir(context, tools, budget)
+
+    def _cap(self, timeout_s: int) -> int:
+        return max(0, min(self._config.run_timeout_s, timeout_s))
+
+    async def _in_workdir(
+        self, context: RunContext, tools: RunTools, budget: _Budget
+    ) -> AgentResult:
         root = Path(
             await asyncio.to_thread(tempfile.mkdtemp, prefix="jr-run-", dir=self._config.work_root)
         )
         try:
             work = _Workdir(root)
             await asyncio.to_thread(work.create)
-            return await self._run(context, tools, plan, work)
+            return await self._run(context, tools, budget, work)
         finally:
             await asyncio.to_thread(shutil.rmtree, root, ignore_errors=True)
 
-    def _timeout_s(self, plan: PlanRecord) -> int:
-        return max(0, min(self._config.run_timeout_s, plan.budget_minutes * 60))
-
     async def _run(
-        self, context: RunContext, tools: RunTools, plan: PlanRecord, work: _Workdir
+        self, context: RunContext, tools: RunTools, budget: _Budget, work: _Workdir
     ) -> AgentResult:
         try:
             snapshot = await self._deps.host.snapshot(work.inbox / "input.bundle")
         except GitError:
             return SandboxResult(is_success=False, outcome="Could not snapshot the repository.")
         try:
-            launch = self._launch(context, plan, work)
+            launch = self._launch(context, budget, work)
         except (CoordinatorTokensUnavailable, ValueError) as error:
             # Both carry fixed, secret-free messages (bad key length, ttl, mount path).
             return SandboxResult(is_success=False, outcome=str(error))
         code, stopped = await self._supervise(launch, tools, work)
         spend = await self._spend(launch.llm_token)
         try:
-            result = await self._result(context, work, snapshot, (code, stopped), launch)
+            if budget.mode == PLAN_MODE:
+                result = await self._plan_result(context, work, (code, stopped), launch)
+            elif budget.mode == TRIAGE_MODE:
+                result = await self._triage_result(context, work, (code, stopped), launch)
+                result = _with_model(result, budget.model)
+            else:
+                result = await self._result(context, work, snapshot, (code, stopped), launch)
         finally:
             await self._keep_artifacts(context.run.id, work, launch.secrets)
         return _with_spend(result, spend)
 
-    def _launch(self, context: RunContext, plan: PlanRecord, work: _Workdir) -> _Launch:
+    def _launch(self, context: RunContext, budget: _Budget, work: _Workdir) -> _Launch:
         task_id, run_id = context.task.id, context.run.id
-        timeout_s = self._timeout_s(plan)
+        timeout_s = budget.timeout_s
         llm_token = mint_llm_proxy_budget_token(
             self.__secret,
             str(task_id),
             timeout_s + USAGE_GRACE_S,
-            usd_to_micro(plan.budget_usd),
+            usd_to_micro(budget.usd),
             now=self._wall(),
         )
         coordinator_token = self._deps.coordinator_tokens.mint(task_id, run_id, timeout_s)
@@ -249,6 +309,10 @@ class DockerAgentRunner:
             "RUN_ID": str(run_id),
             "AGENT_TIMEOUT_S": str(timeout_s),
         }
+        if budget.mode is not None:
+            public["AGENT_MODE"] = budget.mode
+        if budget.model is not None:
+            public["AGENT_MODEL"] = budget.model
         secrets = {"ANTHROPIC_AUTH_TOKEN": llm_token, "COORDINATOR_TOKEN": coordinator_token}
         argv = [cfg.docker, "run", "--rm", "--name", name, "--network", cfg.network]
         for flag in HARDENING_FLAGS:
@@ -333,6 +397,69 @@ class DockerAgentRunner:
             return SandboxResult(is_success=False, outcome=published, handoff=handoff)
         return published
 
+    async def _plan_result(
+        self, context: RunContext, work: _Workdir, exit_status: tuple[int, Stop], launch: _Launch
+    ) -> SandboxResult:
+        """The dev-lead's draft; nothing is published. A missing or invalid plan file fails the
+        run with the parser's fixed reason and the artifacts hint."""
+        code, stopped = exit_status
+        if stopped is not None:
+            return _stopped(stopped, launch.timeout_s)
+        hint = ARTIFACTS_HINT.format(run_id=context.run.id)
+        try:
+            draft = await asyncio.to_thread(
+                read_plan, work.outbox / "plan.json", str(context.task.id)
+            )
+        except PlanFileError as error:
+            return await self._no_output(context, work, launch, (code, str(error)))
+        if code != 0:
+            outcome = f"The sandbox failed (exit {code}); its plan was not used ({hint})."
+            return SandboxResult(is_success=False, outcome=outcome)
+        # Built from counts only: the plan's free text is untrusted.
+        outcome = (
+            f"Plan ready for review: {len(draft.subtasks)} subtasks,"
+            f" {len(draft.acceptance_tests)} acceptance tests."
+        )
+        return SandboxResult(is_success=True, outcome=outcome, plan=draft)
+
+    async def _triage_result(
+        self, context: RunContext, work: _Workdir, exit_status: tuple[int, Stop], launch: _Launch
+    ) -> SandboxResult:
+        """The triager's decision; nothing is published. Like a plan run, a missing or invalid
+        file fails the run with the parser's fixed reason (or the agent's stated one)."""
+        code, stopped = exit_status
+        if stopped is not None:
+            return _stopped(stopped, launch.timeout_s)
+        hint = ARTIFACTS_HINT.format(run_id=context.run.id)
+        try:
+            decision = await asyncio.to_thread(
+                read_triage, work.outbox / "triage.json", str(context.task.id)
+            )
+        except TriageFileError as error:
+            return await self._no_output(context, work, launch, (code, str(error)))
+        if code != 0:
+            outcome = f"The sandbox failed (exit {code}); its triage was not used ({hint})."
+            return SandboxResult(is_success=False, outcome=outcome)
+        # Built from enums only: the triage's free text is untrusted.
+        outcome = (
+            f"Triage ready: {decision.type.value}, {decision.priority.value}/"
+            f"{decision.severity.value}, {decision.verification.status.value}."
+        )
+        return SandboxResult(is_success=True, outcome=outcome, triage=decision)
+
+    async def _no_output(
+        self, context: RunContext, work: _Workdir, launch: _Launch, failure: tuple[int, str]
+    ) -> SandboxResult:
+        """A read-only run left no usable file: the agent's stated reason if it gave one (it
+        stopped on purpose, e.g. blocked or out of budget), else the parser's fixed reason."""
+        code, error = failure
+        hint = ARTIFACTS_HINT.format(run_id=context.run.id)
+        stated = await self._stated_reason(context, work, launch)
+        if stated is not None:
+            return SandboxResult(is_success=False, outcome=f"{stated} ({hint})")
+        lead = f"The sandbox failed (exit {code}). " if code != 0 else ""
+        return SandboxResult(is_success=False, outcome=f"{lead}{error} ({hint})")
+
     async def _failed(
         self,
         context: RunContext,
@@ -378,6 +505,20 @@ class DockerAgentRunner:
             is_success=True, outcome=outcome, branch=branch, diff_stat=stat, handoff=handoff
         )
 
+    async def _stated_reason(
+        self, context: RunContext, work: _Workdir, launch: _Launch
+    ) -> str | None:
+        """A failed handoff's reason (scrubbed, capped, redacted), or None if there is none."""
+        try:
+            handoff = await asyncio.to_thread(
+                read_handoff, work.outbox / "handoff.json", str(context.task.id)
+            )
+        except HandoffError:
+            return None
+        if handoff.status == "done":
+            return None
+        return await self._reason(handoff, launch.secrets)
+
     async def _reason(self, handoff: Handoff, secrets: tuple[str, ...]) -> str:
         """The failed handoff's summary as a card reason: one line, capped, scrubbed, redacted."""
         text = _one_line(_scrub(handoff.summary, secrets))
@@ -421,6 +562,12 @@ def _stopped(stopped: Literal["timeout", "cancelled"], timeout_s: int) -> Sandbo
     return SandboxResult(
         is_success=False, outcome=f"Timed out after {timeout_s} s; sandbox killed."
     )
+
+
+def _with_model(result: SandboxResult, model: str | None) -> SandboxResult:
+    if result.triage is None:
+        return replace(result, model=model)
+    return replace(result, model=model, triage=replace(result.triage, model=model))
 
 
 def _with_spend(result: SandboxResult, spend: ProxyUsage | None) -> SandboxResult:

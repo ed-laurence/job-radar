@@ -50,14 +50,20 @@ async def test_plan_review_runs_the_dev_lead_and_freezes_tests(ui: Board) -> Non
         "backend-engineer",
         "backend-engineer",
     ]
-    assert plan["subtasks"][1]["lease_paths"] == ["api/openapi.yaml"]
+    # Code adds what the contract brings: its regenerated code and, for the tests, contract tests.
+    assert plan["subtasks"][1]["lease_paths"] == [
+        "api/openapi.yaml",
+        "backend/src/app/generated/",
+        "web/src/lib/api/generated/",
+    ]
+    assert plan["subtasks"][0]["lease_paths"] == ["backend/tests/unit/", "backend/tests/contract/"]
     assert plan["subtasks"][0]["agent"] == "qa-expert"
     assert plan["subtasks"][0]["test_only"] is True
-    assert plan["acceptance_tests"] == [
-        "backend/tests/unit/test_contacts_search.py::matches by name",
-        "backend/tests/unit/test_contacts_search.py::orders by last contact",
-    ]
-    assert plan["risk"] == "high"  # the contract lease is a hotspot
+    # Triage wrote no criteria, so the (simulated) planner wrote one for the card's title.
+    test_id = "backend/tests/unit/test_acceptance.py::test_1_add_a_contacts_search_endpoint"
+    assert [c["test_id"] for c in plan["acceptance_criteria"]] == [f"{test_id}_works_as_described"]
+    assert plan["acceptance_tests"] == [f"{test_id}_works_as_described"]
+    assert plan["risk"] == "medium"  # the contract lease and generated code are medium
     assert (plan["tests_approved"], plan["plan_approved"]) == (False, False)
 
 
@@ -209,6 +215,9 @@ async def test_kill_stops_a_running_dev_run_and_releases_its_leases(container: C
         "api/openapi.yaml",
         "backend/src/app/api/",
         "backend/src/app/domain/",
+        # Leased with the contract: the regenerated code (web's falls in the web/src/lib hotspot).
+        "backend/src/app/generated/",
+        "web/src/lib/",
     ]
     task = await services.board.get(actor, task.id)
     killed = await services.workflow.kill(actor, task.id, task.version, None)

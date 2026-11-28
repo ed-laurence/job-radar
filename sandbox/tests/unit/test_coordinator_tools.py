@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import cast
 
 import agent_policy as ap
 import coordinator_client as cc
@@ -131,6 +133,25 @@ def test_server_refusals_are_tool_errors_and_not_recorded() -> None:
     assert TOKEN not in _text(result)
 
 
+def test_post_handoff_schema_matches_the_coordinator() -> None:
+    # The tool's schema spells out what the coordinator accepts, so the model gets it right.
+    spec = next(spec for spec in ct.SPECS if spec.name == "post_handoff")
+    handoff = _obj(_obj(spec.input_schema["properties"])["handoff"])
+    props = _obj(handoff["properties"])
+    assert handoff["additionalProperties"] is False
+    assert _obj(props["status"])["enum"] == ["done", "partial", "blocked", "failed"]
+    tests = _obj(props["tests"])
+    assert tests["additionalProperties"] is False
+    assert set(_obj(tests["properties"])) == {"passed", "failed", "first_failing"}
+    assert tests["required"] == ["passed", "failed"]
+    assert handoff["required"] == ["status", "summary", "tests"]
+
+
+def _obj(value: object) -> dict[str, object]:
+    assert isinstance(value, dict)
+    return cast("dict[str, object]", value)
+
+
 def test_get_task_and_unknown_tool() -> None:
     tools, _, transport = _tools()
     transport.responses["/v1/task"] = (200, {"brief": "b", "next_cursor": None})
@@ -141,3 +162,82 @@ def test_get_task_and_unknown_tool() -> None:
 def test_oversized_results_refused() -> None:
     result = ct.text_result({"brief": "x" * (ct.RESULT_CHARS + 1)})
     assert result["is_error"] is True and "too large" in _text(result)
+
+
+# ------------------------------------------------------------------ plan mode
+
+
+def _plan_tools(
+    tmp_path: Path,
+) -> tuple[ct.CoordinatorTools, ap.RunTracker, FakeTransport, Path]:
+    repo = tmp_path / "repo"
+    (repo / "web/src/features/board").mkdir(parents=True)
+    (repo / "web/src/features/board/Card.test.tsx").write_text("x\n")
+    out = tmp_path / "out" / "plan.json"
+    transport = FakeTransport()
+    client = cc.CoordinatorClient("http://coordinator:8100", TOKEN, transport=transport)
+    tracker = ap.RunTracker(token_budget=100, plan_mode=True)
+    sink = ct.PlanSink(task_id="T-1", repo=repo, out=out)
+    return ct.CoordinatorTools(client, tracker, plan_sink=sink), tracker, transport, out
+
+
+PLAN: dict[str, object] = {
+    "mode": "single",
+    "subtasks": [
+        {
+            "id": "s1",
+            "title": "Card badge",
+            "agent": "frontend-engineer",
+            "lease_paths": ["web/src/features/board/"],
+        }
+    ],
+    "acceptance_criteria": [
+        {
+            "test_id": "web/src/features/board/Card.test.tsx::shows the badge",
+            "expectation": "The card shows a priority badge.",
+        }
+    ],
+    "tests_to_change": ["web/src/features/board/Card.test.tsx"],
+    "budget_usd": 2,
+    "budget_minutes": 20,
+    "risk": "low",
+}
+
+
+def test_plan_specs_are_read_only_plus_submit_plan(tmp_path: Path) -> None:
+    tools, _, transport, _ = _plan_tools(tmp_path)
+    assert tuple(s.name for s in tools.specs) == ap.PLAN_COORDINATOR_TOOLS
+    assert tuple(s.name for s in ct.PLAN_SPECS) == ap.PLAN_COORDINATOR_TOOLS
+    for spec in tools.specs:
+        assert spec.input_schema["additionalProperties"] is False
+    for name in ("claim_paths", "renew_lease", "release_paths", "post_handoff"):
+        assert _call(tools, name, {"paths": ["web/"]})["is_error"] is True
+    assert transport.calls == []
+    dev, _, _ = _tools()
+    assert "submit_plan" not in [s.name for s in dev.specs]
+    assert _call(dev, "submit_plan", {"plan": PLAN})["is_error"] is True
+
+
+def test_submit_plan_writes_the_contract_file(tmp_path: Path) -> None:
+    tools, tracker, transport, out = _plan_tools(tmp_path)
+    result = _call(tools, "submit_plan", {"plan": PLAN})
+    assert result["is_error"] is False, _text(result)
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert written["task_id"] == "T-1"
+    assert written["subtasks"][0]["depends_on"] == []
+    assert written["subtasks"][0]["test_only"] is False
+    assert tracker.plan_submitted is True
+    assert transport.calls == []  # the plan goes to /out, not the coordinator
+
+
+def test_an_invalid_plan_is_a_fixable_tool_error_and_nothing_is_written(tmp_path: Path) -> None:
+    tools, tracker, _, out = _plan_tools(tmp_path)
+    criteria = [{"test_id": "web/src/nowhere/x/Card.test.tsx::a", "expectation": "It works."}]
+    bad = {**PLAN, "acceptance_criteria": criteria, "colour": 1}
+    result = _call(tools, "submit_plan", {"plan": bad})
+    assert result["is_error"] is True
+    text = _text(result)
+    assert "web/src/nowhere/x" in text and "colour" in text and "submit_plan again" in text
+    assert not out.exists() and tracker.plan_submitted is False
+    assert _call(tools, "submit_plan", {"plan": "nope"})["is_error"] is True
+    assert _call(tools, "submit_plan", {})["is_error"] is True

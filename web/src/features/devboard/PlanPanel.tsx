@@ -1,20 +1,26 @@
+import { useId, useState } from "react";
 import type { Plan } from "./api";
 import styles from "./DevBoard.module.css";
+import { uncoveredTestChanges } from "./testChanges";
 
 export interface PlanPanelProps {
   plan: Plan | null | undefined;
+  /** The card's labels; `modify-tests:` labels already allow some existing tests to change. */
+  labels: readonly string[];
   loading: boolean;
   /** Shown only to a maintainer while the card is in Plan review and not yet approved. */
   canApprove: boolean;
   approving: boolean;
   error?: string | undefined;
-  onApprove: () => void;
+  /** `allowTestChanges` is true when the maintainer allowed the plan's uncovered test edits. */
+  onApprove: (allowTestChanges: boolean) => void;
 }
 
 const usd = new Intl.NumberFormat("en", { style: "currency", currency: "USD" });
 
 export function PlanPanel({
   plan,
+  labels,
   loading,
   canApprove,
   approving,
@@ -22,6 +28,14 @@ export function PlanPanel({
   onApprove,
 }: PlanPanelProps) {
   const approved = plan ? plan.plan_approved && plan.tests_approved : false;
+  // Consent is tied to the plan version it was given for, so a revised plan asks again.
+  const [allowedVersion, setAllowedVersion] = useState<number | null>(null);
+  const testsId = useId();
+  const testsHintId = `${testsId}-hint`;
+  const testsToChange = plan?.tests_to_change ?? [];
+  const needsConsent = uncoveredTestChanges(testsToChange, labels).length > 0;
+  const allowed = needsConsent && plan != null && allowedVersion === plan.version;
+  const blocked = needsConsent && !allowed;
   return (
     <section className={styles.section} aria-labelledby="plan-title">
       <h2 id="plan-title">Plan</h2>
@@ -69,6 +83,18 @@ export function PlanPanel({
               </li>
             ))}
           </ol>
+          <h3 id={`${testsId}-criteria`}>Acceptance criteria</h3>
+          {plan.acceptance_criteria.length ? (
+            <ul aria-labelledby={`${testsId}-criteria`}>
+              {plan.acceptance_criteria.map((c) => (
+                <li key={c.test_id}>
+                  <span className={styles.mono}>{c.test_id}</span>: {c.expectation}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className={styles.hint}>No acceptance criteria yet.</p>
+          )}
           <h3>Frozen acceptance tests</h3>
           {plan.acceptance_tests.length ? (
             <ul>
@@ -81,6 +107,37 @@ export function PlanPanel({
           ) : (
             <p className={styles.hint}>None written yet.</p>
           )}
+          {testsToChange.length ? (
+            <>
+              <h3 id={`${testsId}-title`}>Existing tests this plan changes</h3>
+              <ul aria-labelledby={`${testsId}-title`}>
+                {testsToChange.map((t) => (
+                  <li key={t} className={styles.mono}>
+                    {t}
+                  </li>
+                ))}
+              </ul>
+              <p id={testsHintId} className={styles.hint}>
+                Existing tests are read-only for agents, so a passing run can't quietly weaken them.{" "}
+                {needsConsent
+                  ? "Approving lets the agent edit these files and adds a modify-tests: label to the card."
+                  : "The card's modify-tests: label already lets the agent edit these files."}
+              </p>
+              {canApprove && !approved && needsConsent ? (
+                <label className={styles.checkField}>
+                  <input
+                    type="checkbox"
+                    checked={allowed}
+                    aria-describedby={testsHintId}
+                    onChange={(e) =>
+                      setAllowedVersion(e.currentTarget.checked && plan ? plan.version : null)
+                    }
+                  />
+                  Allow the agent to edit these tests
+                </label>
+              ) : null}
+            </>
+          ) : null}
           {error ? (
             <p className={styles.alert} role="alert">
               {error}
@@ -91,8 +148,9 @@ export function PlanPanel({
               <button
                 type="button"
                 className={styles.button}
-                onClick={onApprove}
-                disabled={approving}
+                onClick={() => onApprove(allowed)}
+                disabled={approving || blocked}
+                aria-describedby={blocked ? testsHintId : undefined}
               >
                 Approve plan + tests
               </button>

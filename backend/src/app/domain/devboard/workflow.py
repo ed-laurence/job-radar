@@ -1,6 +1,8 @@
 """The board's automation: drops that start work, and the kill switch.
 
-- create / edit text / `out_of_scope`->`backlog`: triage (then `triaged` or `out_of_scope`)
+- create / edit text / `out_of_scope`->`backlog`: triage (then `triaged` or `out_of_scope`);
+  the route puts an in-scope card at the top (`next`) or bottom (`later`) of `triaged`, or
+  (`now`) moves it on to `plan_review` and starts the plan as a maintainer's drag would
 - `triaged`->`plan_review`: the read-only dev-lead plan plus the test-only step
 - `ready`->`agent_dev`: the dev run (simulated until M2), then `agent_review`
 
@@ -20,21 +22,27 @@ from app.domain.devboard.model import (
     Actor,
     Column,
     EventKind,
+    Route,
     RunKind,
     RunRecord,
     RunStatus,
     TaskRecord,
     TriageRecord,
 )
-from app.domain.devboard.plans import PlanService
+from app.domain.devboard.placement import place_first, place_last
+from app.domain.devboard.plans import PlanService, plan_paths
+from app.domain.devboard.repo_paths import unknown_paths
 from app.domain.devboard.runs import RunService, RunTools
-from app.domain.devboard.triage_policy import finalise
-from app.domain.errors import Conflict, DomainError, ValidationFailed
+from app.domain.devboard.triage_policy import finalise, shown_paths, triage_problem
+from app.domain.errors import Conflict, DomainError, UpstreamUnavailable, ValidationFailed
 from app.domain.ports import Clock, Ids
 from app.domain.ports.devboard import (
     AgentResult,
     AgentRunner,
+    CardRef,
     Dispatcher,
+    PlanDraft,
+    RepoFiles,
     RunContext,
     RunStore,
     TaskStore,
@@ -42,6 +50,9 @@ from app.domain.ports.devboard import (
 )
 
 TRIAGE_COLUMNS = frozenset({Column.BACKLOG, Column.TRIAGED, Column.OUT_OF_SCOPE})
+# Triage sees the other open cards (for its duplicate check), at most this many.
+MAX_OPEN_CARDS = 50
+_OPEN_COLUMNS = tuple(column for column in Column if column is not Column.DONE)
 _AGENTS = {RunKind.TRIAGE: "triage", RunKind.PLAN: "dev-lead", RunKind.DEV: "dev-lead"}
 
 type Work = Callable[[Actor, RunRecord], Awaitable[None]]
@@ -67,8 +78,11 @@ class Workflow:
         agents: Agents,
         dispatcher: Dispatcher,
         system: tuple[Clock, Ids],
+        *,
+        repo_files: RepoFiles,
     ) -> None:
         self._tasks, self._runs = stores.tasks, stores.runs
+        self._repo_files = repo_files
         self._board, self._run_service, self._plans, self._leases = services
         self._agents = agents
         self._dispatcher = dispatcher
@@ -168,13 +182,21 @@ class Workflow:
 
     async def _context(self, actor: Actor, run: RunRecord) -> RunContext:
         task = await self._board.get(actor, run.task_id)
+        is_triage = run.kind is RunKind.TRIAGE
         return RunContext(
             run=run,
             task=task,
             actor=actor,
             plan=await self._tasks.latest_plan(actor.user_id, task.id),
             triage=await self._tasks.latest_triage(actor.user_id, task.id),
+            open_cards=await self._open_cards(actor, task.id) if is_triage else (),
         )
+
+    async def _open_cards(self, actor: Actor, task_id: uuid.UUID) -> tuple[CardRef, ...]:
+        """Other live cards not yet done, in board order."""
+        listed = await self._tasks.list(actor.user_id, _OPEN_COLUMNS, 0, MAX_OPEN_CARDS + 1)
+        others = (CardRef(t.id, t.title, t.column) for t in listed if t.id != task_id)
+        return tuple(others)[:MAX_OPEN_CARDS]
 
     def _tools(self, actor: Actor, run: RunRecord) -> RunTools:
         return RunTools(self._run_service, self._leases, actor.as_agent(), run)
@@ -182,35 +204,62 @@ class Workflow:
     async def _triage(self, actor: Actor, run: RunRecord) -> None:
         context = await self._context(actor, run)
         decision = await self._agents.triage.triage(context, self._tools(actor, run))
-        record = finalise(context.task.id, decision, self._clock.now())
+        now = self._clock.now()
+        record = finalise(context.task.id, decision, now)
+        files = await self._repo_files.paths() if record.in_scope else None
+        problem = triage_problem(decision, files, (card.id for card in context.open_cards))
+        if problem is not None:
+            raise ValidationFailed(problem)
         await self._tasks.add_triage(actor.user_id, record)
         agent = actor.as_agent()
-        target = Column.TRIAGED if record.in_scope else Column.OUT_OF_SCOPE
         moved = await self._board.system_move(
             agent,
             run.task_id,
-            target,
+            Column.TRIAGED if record.in_scope else Column.OUT_OF_SCOPE,
             run_id=run.id,
             change=lambda task: _apply_triage(task, record),
+            rank=await self._triaged_rank(actor, record),
         )
         await self._board.record(agent, moved, EventKind.TRIAGED, run.id)
-        outcome = "In scope." if record.in_scope else f"Out of scope: {record.out_of_scope_reason}"
         await self._run_service.finish(
             actor,
             run,
             RunStatus.SUCCEEDED,
-            outcome,
+            _triage_outcome(record),
             cost_usd=decision.cost_usd,
             model=decision.model,
             provider=decision.provider,
         )
+        if record.in_scope and record.route is Route.NOW:
+            await self._board.system_move(agent, run.task_id, Column.PLAN_REVIEW, run_id=run.id)
+            await self.request_plan(actor, run.task_id)
+
+    async def _triaged_rank(self, actor: Actor, record: TriageRecord) -> str | None:
+        """`next` and `now` go to the top of Triaged, `later` to the bottom."""
+        if not record.in_scope:
+            return None
+        place = place_last if record.route is Route.LATER else place_first
+        return await place(self._tasks, actor.user_id, Column.TRIAGED, record.task_id)
 
     async def _plan(self, actor: Actor, run: RunRecord) -> None:
         context = await self._context(actor, run)
         result = await self._agents.runner.run(context, self._tools(actor, run))
         if result.is_success and result.plan is not None:
-            await self._plans.save_draft(actor.as_agent(), context.task, result.plan)
+            try:
+                await self._check_plan_paths(result.plan)
+                await self._plans.save_draft(actor.as_agent(), context.task, result.plan)
+            except (ValidationFailed, UpstreamUnavailable) as refused:
+                # Code refused the draft: the run fails with the reason and keeps its spend.
+                reason = refused.detail or "The plan was refused."
+                result = replace(result, is_success=False, outcome=reason)
         await self._finish_result(actor, run, result)
+
+    async def _check_plan_paths(self, draft: PlanDraft) -> None:
+        unknown = unknown_paths(plan_paths(draft), await self._repo_files.paths())
+        if unknown:
+            raise ValidationFailed(
+                f"The plan named paths that are not in the repo: {shown_paths(unknown)}"
+            )
 
     async def _develop(self, actor: Actor, run: RunRecord) -> None:
         context = await self._context(actor, run)
@@ -222,13 +271,19 @@ class Workflow:
         finally:
             await tools.release_paths()
         agent = actor.as_agent()
-        # A killed run's card is already `blocked`, so these moves fail and change nothing.
-        if result.is_success:
-            await self._board.system_move(agent, run.task_id, Column.AGENT_REVIEW, run_id=run.id)
-        else:
-            await self._board.system_move(
-                agent, run.task_id, Column.BLOCKED, reason=result.outcome, run_id=run.id
-            )
+        # Move the card only if it is still in `agent_dev`: a request_help, the kill switch or a
+        # human may have moved it while the run worked. The run still finishes with its outcome
+        # and spend either way.
+        task = await self._tasks.get(actor.user_id, run.task_id)
+        if task is not None and task.column is Column.AGENT_DEV:
+            if result.is_success:
+                await self._board.system_move(
+                    agent, run.task_id, Column.AGENT_REVIEW, run_id=run.id
+                )
+            else:
+                await self._board.system_move(
+                    agent, run.task_id, Column.BLOCKED, reason=result.outcome, run_id=run.id
+                )
         await self._finish_result(actor, run, result)
 
     async def _finish_result(self, actor: Actor, run: RunRecord, result: AgentResult) -> None:
@@ -252,5 +307,15 @@ def _apply_triage(task: TaskRecord, triage: TriageRecord) -> TaskRecord:
         risk=triage.risk,
         areas=triage.areas,
         needs_human_design=triage.needs_human_design,
+        priority=triage.priority,
+        severity=triage.severity,
+        route=triage.route,
         out_of_scope_reason=triage.out_of_scope_reason,
     )
+
+
+def _triage_outcome(triage: TriageRecord) -> str:
+    if not triage.in_scope:
+        return f"Out of scope: {triage.out_of_scope_reason}"
+    rating = f"{triage.priority.value}, {triage.severity.value}"
+    return f"In scope: {rating}, route {triage.route.value}."

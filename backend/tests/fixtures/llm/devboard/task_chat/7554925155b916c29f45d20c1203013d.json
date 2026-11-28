@@ -1,0 +1,8 @@
+{
+  "feature": "task_chat",
+  "input_tokens": 800,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 120,
+  "prompt_hash": "7554925155b916c29f45d20c1203013d",
+  "text": "{\"reply\": \"I proposed three acceptance criteria: partial name matches, ordering by last contact date, and an empty search. Accept them and the planner will turn them into tests.\"}"
+}

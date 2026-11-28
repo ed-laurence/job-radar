@@ -22,7 +22,7 @@ LABELS = (
     (cards.API_SEARCH, Column.TRIAGED, Risk.MEDIUM),
     (cards.INFRA_BACKUP, Column.OUT_OF_SCOPE, Risk.MEDIUM),
     (cards.TEST_PLUGIN, Column.OUT_OF_SCOPE, Risk.LOW),
-    (cards.RUN_COST, Column.TRIAGED, Risk.HIGH),
+    (cards.RUN_COST, Column.TRIAGED, Risk.MEDIUM),
 )
 GATE = 1.0
 

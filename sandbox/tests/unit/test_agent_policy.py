@@ -189,3 +189,186 @@ def test_tracker_leases_and_result() -> None:
     assert result["posted_handoff"] is True
     assert result["handoff"] == {"status": "done"}
     assert result["help_requested"] is False
+
+
+# ------------------------------------------------------------------ plan mode (read-only)
+
+PLAN_ALLOWED = [
+    "git ls-files",
+    "git ls-files backend/tests",
+    "git log --oneline -n 20 -- backend/src/app/api",
+    "git grep -n tests_to_change",
+    "cd backend && git grep -l 'def get_task' -- tests",
+    "git show --stat HEAD",
+    "git status --short",
+    "git diff --stat",
+]
+PLAN_DENIED = [
+    "git add web/src/a.ts",
+    "git commit -m x",
+    "git checkout main",
+    "git grep -O vim x",
+    "git grep -nOvim x",
+    "git grep --open-files-in-pager=vim x",
+    "git log --output=/tmp/x",
+    "git -c core.pager=sh log",
+    "git grep --no-index x /etc",
+    "uv run pytest",
+    "pnpm test",
+    "scripts/check.sh --only pytest",
+    "scripts/gen-api.sh",
+    "git grep x | head",
+    "cat AGENTS.md",
+]
+
+
+@pytest.mark.parametrize("command", PLAN_ALLOWED)
+def test_plan_bash_allows_read_only_git(command: str) -> None:
+    decision = ap.tool_allowed("Bash", {"command": command}, [], plan=True)
+    assert decision.allowed, decision.reason
+
+
+@pytest.mark.parametrize("command", PLAN_DENIED)
+def test_plan_bash_refuses_everything_else(command: str) -> None:
+    decision = ap.tool_allowed("Bash", {"command": command}, ["**"], plan=True)
+    assert not decision.allowed
+    assert decision.reason
+
+
+def test_plan_mode_has_no_edits_no_leases_and_only_its_coordinator_tools() -> None:
+    target = {"file_path": f"{ap.WORKSPACE}/web/src/a.ts", "content": "x"}
+    for tool in ("Edit", "Write"):
+        decision = ap.tool_allowed(tool, target, ["**"], plan=True)
+        assert not decision.allowed and "read-only" in decision.reason
+    assert ap.tool_allowed("Read", {"file_path": "AGENTS.md"}, [], plan=True).allowed
+    assert not ap.tool_allowed("Read", {"file_path": "/proc/self/environ"}, [], plan=True).allowed
+    for op in ap.PLAN_COORDINATOR_TOOLS:
+        assert ap.tool_allowed(f"mcp__coordinator__{op}", {}, [], plan=True).allowed
+    for op in ("claim_paths", "renew_lease", "release_paths", "post_handoff"):
+        assert not ap.tool_allowed(f"mcp__coordinator__{op}", {}, [], plan=True).allowed
+    assert not ap.tool_allowed("mcp__coordinator__submit_plan", {}, []).allowed
+    assert ap.PLAN_TOOLS == ("Read", "Glob", "Grep", "Bash")
+    assert set(ap.PLAN_COORDINATOR_TOOLS) == {
+        "get_task",
+        "post_step",
+        "request_help",
+        "submit_plan",
+    }
+
+
+# ------------------------------------------------------------------ dev mode: existing tests
+
+
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        (["modify-tests:backend/tests/unit/a.py"], ("backend/tests/unit/a.py",)),
+        (
+            ["ui", "modify-tests: ./web/src/a.test.tsx , backend/tests/unit/ ,"],
+            ("web/src/a.test.tsx", "backend/tests/unit"),
+        ),
+        (["modify-tests:/etc/x,../y,backend/tests/x.py"], ("backend/tests/x.py",)),
+        (["modify-test:backend/tests/a.py", 3, None], ()),
+    ],
+)
+def test_modify_tests_labels_are_parsed_like_the_board(
+    labels: list[object], expected: tuple[str, ...]
+) -> None:
+    assert ap.parse_modify_tests(labels) == expected
+
+
+@pytest.mark.parametrize(
+    ("entries", "path", "expected"),
+    [
+        (["backend/tests/unit/a.py"], "backend/tests/unit/a.py", True),
+        (["backend/tests/unit"], "backend/tests/unit/x/b.py", True),
+        (["backend/tests/un"], "backend/tests/unit/a.py", False),
+        (["backend/tests/unit/a.py"], "backend/tests/unit/a.py.bak", False),
+        ([], "backend/tests/unit/a.py", False),
+    ],
+)
+def test_coverage_is_exact_or_folder_prefix(entries: list[str], path: str, expected: bool) -> None:
+    assert ap.covers(entries, path) is expected
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("backend/tests/unit/test_a.py", True),
+        ("backend/tests/conftest.py", True),
+        ("web/tests/e2e/board.spec.ts", True),
+        ("web/src/features/board/Card.test.tsx", True),
+        ("web/src/lib/x.test.ts", True),
+        ("web/src/features/board/Card.tsx", False),
+        ("backend/src/app/tests_helper.py", False),
+    ],
+)
+def test_test_paths(path: str, expected: bool) -> None:
+    assert ap.is_test_path(path) is expected
+
+
+EXISTING = frozenset({"backend/tests/unit/test_board.py", "web/src/features/board/Card.test.tsx"})
+WIDE = ["backend/", "web/"]
+
+
+def test_existing_tests_need_a_modify_tests_label() -> None:
+    for rel in sorted(EXISTING):
+        target = {"file_path": f"{ap.WORKSPACE}/{rel}"}
+        denied = ap.tool_allowed("Edit", target, WIDE, existing_tests=EXISTING)
+        assert not denied.allowed and "modify-tests" in denied.reason
+        covered = ap.tool_allowed(
+            "Edit", target, WIDE, existing_tests=EXISTING, modify_tests=(rel.rsplit("/", 1)[0],)
+        )
+        assert covered.allowed, covered.reason
+    other = ap.tool_allowed(
+        "Write",
+        {"file_path": "backend/tests/unit/test_board.py"},
+        WIDE,
+        existing_tests=EXISTING,
+        modify_tests=("backend/tests/unit/test_boar",),
+    )
+    assert not other.allowed
+
+
+def test_new_test_files_stay_allowed_under_a_lease() -> None:
+    target = {"file_path": "backend/tests/unit/test_new.py"}
+    assert ap.tool_allowed("Write", target, WIDE, existing_tests=EXISTING).allowed
+    assert not ap.tool_allowed("Write", target, ["web/"], existing_tests=EXISTING).allowed
+    label_but_no_lease = ap.tool_allowed(
+        "Edit",
+        {"file_path": "backend/tests/unit/test_board.py"},
+        ["web/"],
+        existing_tests=EXISTING,
+        modify_tests=("backend/tests",),
+    )
+    assert not label_but_no_lease.allowed
+
+
+GEN_API = [
+    "scripts/gen-api.sh",
+    "./scripts/gen-api.sh",
+    "bash scripts/gen-api.sh",
+    f"{ap.WORKSPACE}/scripts/gen-api.sh",
+]
+
+
+@pytest.mark.parametrize("command", GEN_API)
+def test_gen_api_only_with_the_spec_leased(command: str) -> None:
+    for leases in (["api/openapi.yaml"], ["api/"]):
+        decision = ap.tool_allowed("Bash", {"command": command}, leases)
+        assert decision.allowed, decision.reason
+    assert not ap.tool_allowed("Bash", {"command": command}, ["web/"]).allowed
+    assert not ap.tool_allowed("Bash", {"command": command}, []).allowed
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["scripts/gen-api.sh --check", "scripts/gen-api.sh; id", "scripts/gen-api.sh --only=web x"],
+)
+def test_gen_api_takes_no_arguments(command: str) -> None:
+    assert not ap.tool_allowed("Bash", {"command": command}, ["api/openapi.yaml"]).allowed
+
+
+def test_generated_stays_protected_with_the_spec_leased() -> None:
+    target = {"file_path": "web/src/lib/api/generated/schema.d.ts"}
+    assert not ap.tool_allowed("Write", target, ["api/openapi.yaml", "web/"]).allowed

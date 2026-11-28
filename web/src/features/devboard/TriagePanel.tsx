@@ -1,5 +1,8 @@
+import Link from "next/link";
+import { useId } from "react";
 import type { TriageResult } from "./api";
 import styles from "./DevBoard.module.css";
+import { ROUTE_LABEL, SEVERITY_LABEL, VERIFICATION_LABEL } from "./triageLabels";
 
 export interface TriagePanelProps {
   triage: TriageResult | null | undefined;
@@ -7,6 +10,8 @@ export interface TriagePanelProps {
 }
 
 export function TriagePanel({ triage, loading }: TriagePanelProps) {
+  const refsId = useId();
+  const pathsId = useId();
   return (
     <section className={styles.section} aria-labelledby="triage-title">
       <h2 id="triage-title">Triage</h2>
@@ -25,6 +30,16 @@ export function TriagePanel({ triage, loading }: TriagePanelProps) {
             </p>
           ) : null}
           <dl className={styles.facts}>
+            <dt>Priority</dt>
+            <dd>{triage.priority}</dd>
+            <dt>Severity</dt>
+            <dd>{SEVERITY_LABEL[triage.severity]}</dd>
+            <dt>Impact</dt>
+            <dd>{triage.impact}</dd>
+            <dt>Route</dt>
+            <dd>
+              <strong>{ROUTE_LABEL[triage.route]}</strong>: {triage.route_reason}
+            </dd>
             <dt>Type</dt>
             <dd>{triage.type}</dd>
             <dt>Size</dt>
@@ -45,17 +60,46 @@ export function TriagePanel({ triage, loading }: TriagePanelProps) {
               </>
             ) : null}
           </dl>
-          <h3>Acceptance criteria</h3>
-          {triage.acceptance_criteria.length ? (
-            <ul>
-              {triage.acceptance_criteria.map((c) => (
-                <li key={c.test_id}>
-                  <span className={styles.mono}>{c.test_id}</span>: {c.expectation}
+          <h3>Verification</h3>
+          <dl className={styles.facts}>
+            <dt>Status</dt>
+            <dd>{VERIFICATION_LABEL[triage.verification.status]}</dd>
+            {triage.verification.duplicate_of ? (
+              <>
+                <dt>Duplicate of</dt>
+                <dd>
+                  <Link href={`/dev-board/${triage.verification.duplicate_of}`}>
+                    Open the original card
+                  </Link>
+                </dd>
+              </>
+            ) : null}
+            <dt>Evidence</dt>
+            <dd className={styles.body}>{triage.verification.evidence}</dd>
+          </dl>
+          <h4 id={refsId}>Code references</h4>
+          {triage.verification.code_refs.length ? (
+            <ul aria-labelledby={refsId}>
+              {triage.verification.code_refs.map((path) => (
+                <li key={path}>
+                  <code className={styles.mono}>{path}</code>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className={styles.hint}>None.</p>
+            <p className={styles.hint}>No code references.</p>
+          )}
+          <h4 id={pathsId}>Likely paths</h4>
+          {triage.likely_paths?.length ? (
+            <ul aria-labelledby={pathsId}>
+              {triage.likely_paths.map((path) => (
+                <li key={path}>
+                  <code className={styles.mono}>{path}</code>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className={styles.hint}>No likely paths.</p>
           )}
         </>
       )}

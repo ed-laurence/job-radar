@@ -1,8 +1,0 @@
-{
-  "feature": "task_chat",
-  "input_tokens": 800,
-  "model": "claude-sonnet-5-5",
-  "output_tokens": 120,
-  "prompt_hash": "3596049258dc8ee78870c8663918f74a",
-  "text": "{\"reply\": \"I proposed three acceptance criteria: partial name matches, ordering by last contact date, and an empty search. Accept them and triage will turn them into tests.\"}"
-}

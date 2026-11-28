@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.api.devboard import mapping
-from app.domain.devboard.model import Page, StepRecord
+from app.domain.devboard.model import Actor, Page, StepRecord
 from app.domain.devboard.proposals import ProposalRecord, changes_to_dict
 from app.domain.devboard.task_chat import ChatMessageView
 from app.domain.devboard.task_chat_decisions import AcceptOutcome
@@ -50,10 +50,10 @@ def message_page(page: Page[ChatMessageView]) -> TaskChatMessagePage:
     )
 
 
-def accepted(outcome: AcceptOutcome) -> TaskChatProposalAccepted:
+def accepted(outcome: AcceptOutcome, viewer: Actor) -> TaskChatProposalAccepted:
     return TaskChatProposalAccepted(
         proposal=proposal(outcome.proposal),
-        task=mapping.task(outcome.task),
+        task=mapping.task(outcome.task, viewer),
         returned_to_backlog=outcome.returned_to_backlog,
         note=outcome.note,
     )

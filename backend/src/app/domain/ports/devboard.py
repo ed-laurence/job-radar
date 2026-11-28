@@ -19,9 +19,12 @@ from app.domain.devboard.model import (
     LeaseRecord,
     NewStep,
     PlanRecord,
+    Priority,
     Risk,
+    Route,
     RunRecord,
     RunStatus,
+    Severity,
     Size,
     StepRecord,
     Subtask,
@@ -29,6 +32,7 @@ from app.domain.devboard.model import (
     TaskRecord,
     TaskType,
     TriageRecord,
+    Verification,
 )
 
 
@@ -194,14 +198,34 @@ class Dispatcher(Protocol):
 
 
 @dataclass(frozen=True)
+class CardRef:
+    """Another open card, for triage's duplicate check. The title is untrusted data."""
+
+    id: uuid.UUID
+    title: str
+    column: Column
+
+
+@dataclass(frozen=True)
 class RunContext:
-    """What an agent run gets: never the conversation, only the card and its plan."""
+    """What an agent run gets: never the conversation, only the card and its plan (and, for
+    triage, the other open cards)."""
 
     run: RunRecord
     task: TaskRecord
     actor: Actor
     plan: PlanRecord | None
     triage: TriageRecord | None
+    open_cards: tuple[CardRef, ...] = ()
+
+
+class RepoFiles(Protocol):
+    """The repo's files (working tree, `.gitignore`d files left out), as repo-relative paths.
+    Agents' paths are checked against it (`app.domain.devboard.repo_paths`)."""
+
+    async def paths(self) -> frozenset[str]:
+        """Raises `UpstreamUnavailable` when the listing can't be read."""
+        ...
 
 
 class RunTools(Protocol):
@@ -220,13 +244,19 @@ class RunTools(Protocol):
 
 @dataclass(frozen=True)
 class TriageDecision:
-    """The triage agent's answer before code applies the risk map and the scope check."""
+    """The triage agent's answer before code applies the risk map, the scope check, the repo
+    path check and the routing rules. Triage writes no acceptance criteria (the planner does)."""
 
     type: TaskType
     size: Size
     llm_risk: Risk
     areas: tuple[Area, ...]
-    criteria: tuple[Criterion, ...]
+    priority: Priority
+    severity: Severity
+    impact: str
+    route: Route
+    route_reason: str
+    verification: Verification
     needs_human_design: bool
     likely_paths: tuple[str, ...]
     out_of_scope_reason: str | None = None
@@ -249,6 +279,8 @@ class PlanDraft:
     budget_usd: float
     budget_minutes: int
     llm_risk: Risk
+    tests_to_change: tuple[str, ...] = ()
+    acceptance_criteria: tuple[Criterion, ...] = ()
 
 
 @dataclass(frozen=True)

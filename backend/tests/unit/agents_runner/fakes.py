@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.adapters.agents.usage import ProxyUsage
-
 from app.adapters.codehost.local_git import DiffStat, GitError, PublishedBranch, Snapshot
 from app.domain.devboard.model import (
     Actor,

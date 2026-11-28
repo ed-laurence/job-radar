@@ -1,0 +1,8 @@
+{
+  "feature": "triage",
+  "input_tokens": 900,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 300,
+  "prompt_hash": "71774fcb4d444ff1bb7210e0b5b56875",
+  "text": "{\"type\": \"feature\", \"size\": \"S\", \"risk\": \"low\", \"areas\": [\"api\"], \"priority\": \"P2\", \"severity\": \"minor\", \"impact\": \"Users with many contacts scroll to find one; no deadline.\", \"route\": \"next\", \"route_reason\": \"A contained feature with no open question; plan it soon.\", \"verification\": {\"status\": \"confirmed\", \"evidence\": \"The CRM routes list contacts but take no name filter; the card now says how to test it.\", \"code_refs\": [\"backend/src/app/api/jobs/crm.py\", \"backend/src/app/domain/jobs/crm.py\"], \"duplicate_of\": null}, \"needs_human_design\": false, \"out_of_scope\": false, \"likely_paths\": [\"backend/src/app/api/\", \"backend/src/app/domain/\"]}"
+}

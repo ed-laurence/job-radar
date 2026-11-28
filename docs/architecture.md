@@ -206,6 +206,32 @@ Specified in `plan.md` "Sandboxing" and "Code review"; the jobs are provisioned 
   llm-proxy and keeps each run's handoff, agent log and steps in `.artifacts/agent-runs/<run>/`
   (last 20). Known gap: `dev_runs.cost_usd` can't be null yet, so an unknown spend shows $0.00
   with a note in the outcome.
+- Plan runs (the dev-lead) use the same image and hardening with `AGENT_MODE=plan`
+  (`AGENT_PLANNER=sandbox|simulation`, default sandbox under `AGENT_SANDBOX=docker`; budget
+  `AGENT_PLAN_BUDGET_USD` 2.00, since llm-proxy holds about $0.30 per call up front; timeout `AGENT_PLAN_TIMEOUT_S` 600). The planner is read-only
+  (Read/Glob/Grep, read-only git, no leases: the coordinator refuses `claim_paths` with 403), checks
+  test paths against the real tree, and writes `/out/plan.json` through its `submit_plan` tool;
+  the runner parses it strictly (`adapters/agents/plan_file.py`). A planner that stops without a
+  plan gives its handoff reason on the card. Code then shapes the draft (`domain/devboard/plans.py`):
+  a subtask leasing `api/openapi.yaml` also gets the regenerated dirs (written only by
+  `scripts/gen-api.sh`, which the writer may run only while it holds the contract lease), the
+  test-only subtask gets `backend/tests/contract/`, and a draft with unusable acceptance-test or
+  `tests_to_change` paths fails the run.
+- The planner writes the acceptance criteria (triage writes none). The backend re-checks every
+  criterion's test file and lease path against the working tree (`domain/devboard/repo_paths.py`,
+  `RepoFiles` port, `adapters/codehost/working_tree.py`) and fails the plan run on any path that
+  isn't in the repo.
+- Triage runs use the same image read-only with `AGENT_MODE=triage` (`AGENT_TRIAGER=sandbox|in_app`;
+  Sonnet; `AGENT_TRIAGE_BUDGET_USD` 0.50, `AGENT_TRIAGE_TIMEOUT_S` 300). `get_task` adds the other
+  open cards for the duplicate check; Bash is limited to running existing tests. The agent writes
+  `/out/triage.json` through `submit_triage`. The guard and PII checks run before the sandbox starts.
+  Without the sandbox, the in-app `TriageLlmAgent` gets the writable file list as data (a frozen
+  `backend/tests/fixtures/llm/devboard/repo_files.txt` under `LLM=replay`, so offline prompt hashes
+  stay stable). Either way, code applies the repo path check and the routing rules.
+- Existing tests are read-only for agents. A plan lists the ones it must edit in `tests_to_change`;
+  approving it with `allow_test_changes` adds `modify-tests:<path>` labels, and the writer may then
+  edit only existing test files those labels cover (exact path, or a directory prefix). The rule is
+  the same in the web (`features/devboard/testChanges.ts`), the approval check and the writer policy.
 
 ## End-to-end flows
 
@@ -283,15 +309,17 @@ sequenceDiagram
 
     M->>A: POST /tasks (body SDP-redacted before save)
     M->>A: POST /tasks/{id}/move → triaged
-    A->>T: guard → PII → structured LLM call
+    A->>T: guard → PII → read-only sandbox (or one LLM call)<br/>repo + open cards: verify, prioritise, route
     T->>DB: run_steps (redacted), NOTIFY run_steps
-    T-->>A: TriageOutput
-    A->>A: triage_policy: code sets risk (path-risk map)<br/>and scope. The LLM can only raise risk
+    T-->>A: TriageDecision (no acceptance criteria)
+    A->>A: triage_policy: code sets risk (path-risk map), scope,<br/>repo path check and route. The LLM can only raise risk
     alt needs infra, CI, harness, auth or secrets
         A->>SM: → out_of_scope (can't reach ready)
-    else in scope
+    else route next / later
+        A->>SM: stay triaged (top / bottom)
+    else route now
         A->>SM: → plan_review
-        A->>R: read-only plan + test-only step
+        A->>R: read-only plan (writes the acceptance criteria) + test-only step
         M->>A: POST /tasks/{id}/plan/approve (tests + plan)
         M->>A: move → ready → agent_dev
         R->>DB: steps, leases, handoff

@@ -1,0 +1,8 @@
+{
+  "feature": "triage",
+  "input_tokens": 900,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 300,
+  "prompt_hash": "237bdbdbc47447e8560bfbc3c8be3eba",
+  "text": "{\"type\": \"bug\", \"size\": \"S\", \"risk\": \"low\", \"areas\": [\"web\"], \"priority\": \"P1\", \"severity\": \"major\", \"impact\": \"Everyone using the board loses sight of cards after any conflict.\", \"route\": \"now\", \"route_reason\": \"Confirmed, high impact and a small fix.\", \"verification\": {\"status\": \"confirmed\", \"evidence\": \"The board's move handler drops the card on error instead of restoring it.\", \"code_refs\": [\"web/src/features/devboard/Board.tsx\"], \"duplicate_of\": null}, \"needs_human_design\": false, \"out_of_scope\": false, \"likely_paths\": [\"web/src/features/devboard/\"]}"
+}

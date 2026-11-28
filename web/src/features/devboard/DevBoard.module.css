@@ -101,14 +101,36 @@
   transition: border-color var(--duration-fast);
 }
 
-.columnOver {
+/* While a card is dragged: legal targets get the green accent; the one under it is filled too. */
+.columnValid {
   border-color: var(--color-accent);
 }
 
-.columnLocked {
-  opacity: 0.55;
+.columnOver {
+  background: var(--color-accent-soft);
+}
+
+/* An illegal target is red and dashed with a not-allowed cursor, so colour is not the only cue;
+   screen readers get "Can't drop here" from the column's description. The border and surface
+   pair is the danger badge's, which meets WCAG AA in both themes. */
+.columnInvalid {
   border-style: dashed;
-  border-color: var(--color-border);
+  border-color: var(--color-danger);
+  background: var(--color-danger-surface);
+  cursor: not-allowed;
+}
+
+/* In the DOM for screen readers, not shown. */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .columnHeader {
@@ -139,42 +161,24 @@
   min-height: 2rem;
 }
 
+.cardItem {
+  min-width: 0;
+}
+
+/* The whole card is the drag source (dnd-kit activator), so it is focusable and grabbable. */
 .card {
   display: flex;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
   padding: var(--space-3);
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   box-shadow: var(--shadow-sm);
-}
-
-.cardDragging {
-  opacity: 0.5;
-}
-
-.cardLocked {
-  border-style: dashed;
-  background: var(--color-surface-muted);
-}
-
-.handle {
-  font: inherit;
-  align-self: flex-start;
-  padding: var(--space-1);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text-muted);
   cursor: grab;
-  touch-action: none;
-}
-
-.cardBody {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
+  /* Pan and zoom stay native; the touch sensor's press delay tells a drag from a scroll. */
+  touch-action: manipulation;
 }
 
 .cardLink {
@@ -183,10 +187,73 @@
   overflow-wrap: anywhere;
 }
 
-.handle:focus-visible,
+.card:focus-visible,
 .cardLink:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+/* The original card while its copy is dragged: a muted, dashed placeholder that keeps its size. */
+.cardDragging {
+  border-style: dashed;
+  border-color: var(--color-text-muted);
+  background: var(--color-surface-muted);
+  box-shadow: none;
+  cursor: grabbing;
+}
+
+.cardDragging > * {
+  opacity: 0.35;
+}
+
+/* dnd-kit's DragOverlay wrapper; it is sized to the original card. */
+.overlay {
+  cursor: grabbing;
+}
+
+/* The copy that follows the pointer: lifted, full opacity, same width as the original. */
+.cardOverlay {
+  height: 100%;
+  box-shadow: var(--shadow-lg);
+  cursor: grabbing;
+}
+
+.cardOverlayTilted {
+  transform: rotate(3deg);
+  transition: transform 200ms ease;
+}
+
+/* Straightens while the drop animation carries it back into place. */
+.overlayDropping .cardOverlayTilted {
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cardOverlayTilted {
+    transform: none;
+  }
+}
+
+.cardLocked {
+  border-style: dashed;
+  background: var(--color-surface-muted);
+}
+
+/* Clipped visually only: the full text stays in the DOM (and in `title`) for screen readers. */
+.clamp,
+.cardDescription {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
+.cardDescription {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
 }
 
 .badges {
@@ -203,11 +270,48 @@
   padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
+  overflow-wrap: anywhere;
 }
 
+/* Tone pairs: token text on its soft token background (AA in light and dark themes). */
 .badgeDanger {
   border-color: var(--color-danger);
   color: var(--color-danger);
+  background: var(--color-danger-surface);
+}
+
+.badgeHot {
+  border-color: var(--color-hot);
+  color: var(--color-hot);
+  background: var(--color-hot-soft);
+}
+
+.badgeWarm {
+  border-color: var(--color-warm);
+  color: var(--color-warm);
+  background: var(--color-warm-soft);
+}
+
+.badgeCold {
+  border-color: var(--color-cold);
+  color: var(--color-cold);
+  background: var(--color-cold-soft);
+}
+
+.badgeAccent {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.badgeMission {
+  border-color: var(--color-mission);
+  color: var(--color-mission);
+  background: var(--color-mission-soft);
+}
+
+.badgeNeutral {
+  color: var(--color-text);
 }
 
 .backdrop {
@@ -262,6 +366,16 @@
   gap: var(--space-1);
 }
 
+.checkField {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.checkField input {
+  accent-color: var(--color-accent);
+}
+
 .field input,
 .field textarea {
   font: inherit;
@@ -294,7 +408,8 @@
 }
 
 .section h2,
-.section h3 {
+.section h3,
+.section h4 {
   margin: 0;
 }
 

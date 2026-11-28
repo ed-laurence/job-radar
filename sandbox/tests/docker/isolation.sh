@@ -18,7 +18,12 @@
 #   4. llm-proxy refuses missing, expired, forged, retired-format (jrt1) and over-budget tokens;
 #   5. plumbing: bundle in -> result.bundle + handoff.json out (AGENT_MODE=stub);
 #   6. agent mode fails closed: with fake tokens and no working coordinator the run ends with
-#      a "failed" handoff and no edits (proves the image's agent runner and its wiring).
+#      a "failed" handoff and no edits (proves the image's agent runner and its wiring);
+#   7. plan mode (AGENT_MODE=plan) fails closed the same way: failed handoff, no plan.json, no
+#      result bundle, no Postgres, no tests;
+#   8. triage mode (AGENT_MODE=triage) fails closed the same way: failed handoff, no
+#      triage.json, no result bundle, no Postgres, no suite run;
+#   9. scripts/gen-api.sh runs offline in the image (baked generators, egress blocked).
 # Exit: 0 all passed, 1 a check failed, 77 skipped (Docker not available).
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
@@ -34,7 +39,7 @@ for arg in "$@"; do
   case "$arg" in
     --build) BUILD=1 ;;
     --snapshot) SNAPSHOT=1 ;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
@@ -227,6 +232,82 @@ print(f"  status={h['status']} summary={h['summary'][:70]}...", file=sys.stderr)
 PY
 }
 check "agent mode fails closed without a coordinator task" agent_fails_closed
+
+# ------------------------------------------------------------ plan mode fails closed
+plan_fails_closed() {
+  local in="$WORK/in-agent" out="$WORK/out-plan"
+  mkdir -p "$out"
+  AGENT_MODE=plan RUN_ID=iso-run-2 AGENT_TIMEOUT_S=120 \
+    ANTHROPIC_AUTH_TOKEN=jrt2.isolation.fake COORDINATOR_TOKEN=jrc1.isolation.fake \
+    "$ROOT/sandbox/run.sh" --task-id iso-plan --in "$in" --out "$out" \
+    >"$WORK/run-plan.log" 2>&1 || return 1
+  grep -q "coordinator unreachable" "$WORK/run-plan.log" || return 1
+  if grep -q "postgres 16" "$WORK/run-plan.log"; then return 1; fi
+  "$PY" - "$out" <<'PY'
+import json, os, sys
+out = sys.argv[1]
+h = json.load(open(os.path.join(out, "handoff.json"), encoding="utf-8"))
+assert h["status"] == "failed", h["status"]
+assert h["summary"].startswith("Stopped: coordinator unreachable"), h["summary"]
+assert "plan run: no tests run" in h["skipped_checks"], h["skipped_checks"]
+assert not os.path.exists(os.path.join(out, "plan.json"))
+assert not os.path.exists(os.path.join(out, "result.bundle"))
+log = [json.loads(line) for line in open(os.path.join(out, "agent.log"), encoding="utf-8")]
+assert [e["event"] for e in log] == ["stop"], log  # no model turn was taken
+print(f"  status={h['status']} summary={h['summary'][:70]}...", file=sys.stderr)
+PY
+}
+check "plan mode fails closed: no plan, no bundle, no tests" plan_fails_closed
+
+# ------------------------------------------------------------ triage mode fails closed
+triage_fails_closed() {
+  local in="$WORK/in-agent" out="$WORK/out-triage"
+  mkdir -p "$out"
+  AGENT_MODE=triage RUN_ID=iso-run-3 AGENT_TIMEOUT_S=120 \
+    ANTHROPIC_AUTH_TOKEN=jrt2.isolation.fake COORDINATOR_TOKEN=jrc1.isolation.fake \
+    "$ROOT/sandbox/run.sh" --task-id iso-triage --in "$in" --out "$out" \
+    >"$WORK/run-triage.log" 2>&1 || return 1
+  grep -q "coordinator unreachable" "$WORK/run-triage.log" || return 1
+  grep -q "triager, read-only" "$WORK/run-triage.log" || return 1
+  if grep -q "postgres 16" "$WORK/run-triage.log"; then return 1; fi
+  "$PY" - "$out" <<'PY'
+import json, os, sys
+out = sys.argv[1]
+h = json.load(open(os.path.join(out, "handoff.json"), encoding="utf-8"))
+assert h["status"] == "failed", h["status"]
+assert h["summary"].startswith("Stopped: coordinator unreachable"), h["summary"]
+assert "triage run: no suite run" in h["skipped_checks"], h["skipped_checks"]
+assert not os.path.exists(os.path.join(out, "triage.json"))
+assert not os.path.exists(os.path.join(out, "result.bundle"))
+log = [json.loads(line) for line in open(os.path.join(out, "agent.log"), encoding="utf-8")]
+assert [e["event"] for e in log] == ["stop"], log  # no model turn was taken
+print(f"  status={h['status']} summary={h['summary'][:70]}...", file=sys.stderr)
+PY
+}
+check "triage mode fails closed: no triage, no bundle, no suite" triage_fails_closed
+
+# ------------------------------------------------------------ gen-api.sh offline in the image
+gen_api_offline() {
+  local repo="$WORK/repo-gen" in="$WORK/in-gen" out="$WORK/out-gen" path
+  mkdir -p "$repo" "$in" "$out"
+  for path in api scripts backend/src/app/generated web/src/lib/api/generated; do
+    mkdir -p "$repo/$(dirname "$path")"
+    cp -R "$ROOT/$path" "$repo/$path"
+  done
+  rm -rf "$repo/backend/src/app/generated/__pycache__"
+  git -C "$repo" -c init.defaultBranch=main init -q
+  git -C "$repo" -c core.safecrlf=false add -A
+  # Windows checkouts lose the exec bit; the real bundle carries it from the index.
+  git -C "$repo" ls-files -z -- 'scripts/*.sh' | xargs -0 git -C "$repo" update-index --chmod=+x --
+  git -C "$repo" -c user.name=t -c user.email=t@example.test commit -qm base
+  git -C "$repo" bundle create "$in/input.bundle" HEAD main >/dev/null 2>&1
+  "$ROOT/sandbox/run.sh" --task-id iso-gen --in "$in" --out "$out" \
+    --entrypoint /bin/bash --arg /probe/gen_api_offline.sh \
+    -- --mount "type=bind,source=$(host_path "$HERE"),target=/probe,readonly" \
+    >"$WORK/run-gen.log" 2>&1 || { tail -n 15 "$WORK/run-gen.log" >&2; return 1; }
+  grep -q "gen-api offline: ok" "$WORK/run-gen.log"
+}
+check "scripts/gen-api.sh runs offline in the writer image" gen_api_offline
 
 if [[ $SNAPSHOT -eq 1 ]]; then
   # Snapshot of tracked + untracked-but-not-ignored files; the project's own git is only read.

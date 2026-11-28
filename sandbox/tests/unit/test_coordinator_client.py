@@ -136,7 +136,8 @@ def test_operations_hit_the_contract_paths(api: tuple[FakeApi, str]) -> None:
         ("POST", "/v1/leases/release", {}),
         ("POST", "/v1/leases/release", {"paths": ["web/src/a.ts"]}),
         ("POST", "/v1/steps", {"kind": "message", "text": "tests written"}),
-        ("POST", "/v1/handoff", {"handoff": {"status": "done", "summary": "s"}}),
+        # The handoff object is the body itself (docs/features/coordinator.md), not wrapped.
+        ("POST", "/v1/handoff", {"status": "done", "summary": "s"}),
         ("POST", "/v1/help", {"text": "lease wait timed out"}),
     ]
     assert all(c.headers["content-type"] == "application/json" for c in state.calls)
@@ -153,6 +154,32 @@ def test_problem_details_and_413(api: tuple[FakeApi, str]) -> None:
     with pytest.raises(cc.CoordinatorError) as info:
         _client(url).handoff({"summary": "w " * 500})
     assert info.value.status == 413 and "refused" in str(info.value)
+
+
+# Regression: a dev agent's handoff got "422 AgentHandoff refused" with no hint of the field,
+# so it couldn't fix it. The server's field errors (pointer + message, never the input) pass on.
+def test_422_field_errors_reach_the_agent(api: tuple[FakeApi, str]) -> None:
+    state, url = api
+    errors = [
+        {"pointer": "/tests/skipped", "message": "Extra inputs are not permitted"},
+        {"pointer": "/status", "message": "Input should be 'done' or 'partial'"},
+    ]
+    state.status, state.problem = 422, {"title": "AgentHandoff refused", "errors": errors}
+    with pytest.raises(cc.CoordinatorError) as info:
+        _client(url).handoff({"status": "complete"})
+    text = str(info.value)
+    assert "/tests/skipped: Extra inputs are not permitted" in text
+    assert "/status: Input should be" in text
+
+
+def test_field_errors_are_capped(api: tuple[FakeApi, str]) -> None:
+    state, url = api
+    errors = [{"pointer": f"/x{i}", "message": "m" * 500} for i in range(20)]
+    state.status, state.problem = 422, {"title": "Invalid input", "errors": errors}
+    with pytest.raises(cc.CoordinatorError) as info:
+        _client(url).step("message", "x")
+    assert "/x4" in str(info.value) and "/x5" not in str(info.value)
+    assert len(str(info.value)) < 1500
 
 
 def test_bad_token_error_does_not_leak_it(api: tuple[FakeApi, str]) -> None:

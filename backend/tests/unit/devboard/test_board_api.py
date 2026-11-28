@@ -8,7 +8,7 @@ import pytest
 
 from app.main import Container
 from tests.unit.devboard import cards
-from tests.unit.devboard.support import AS_USER, Board, board
+from tests.unit.devboard.support import AS_MAINTAINER, AS_USER, Board, board
 
 
 @pytest.fixture
@@ -35,7 +35,15 @@ async def test_create_starts_in_backlog_and_triage_moves_it(ui: Board) -> None:
     assert (task["type"], task["size"], task["areas"]) == ("feature", "S", ["api"])
     triage = (await ui.http.get(f"/api/tasks/{created['id']}/triage", headers=AS_USER)).json()
     assert triage["in_scope"] is True
-    assert triage["acceptance_criteria"][0]["test_id"].startswith("backend/tests/unit/")
+    # Triage verifies, rates and routes; it writes no acceptance criteria (the planner does).
+    assert "acceptance_criteria" not in triage
+    assert (triage["priority"], triage["severity"], triage["route"]) == ("P2", "minor", "next")
+    assert triage["verification"]["status"] == "confirmed"
+    assert triage["verification"]["code_refs"] == [
+        "backend/src/app/api/jobs/crm.py",
+        "backend/src/app/domain/jobs/crm.py",
+    ]
+    assert (task["priority"], task["severity"], task["route"]) == ("P2", "minor", "next")
     assert triage["provider"] == "replay"
 
 
@@ -43,7 +51,7 @@ async def test_risk_comes_from_paths_and_the_model_can_only_raise_it(ui: Board) 
     api = await ui.create(cards.API_SEARCH)
     contract = await ui.create(cards.RUN_COST)
     assert api["risk"] == "medium"  # model said low; domain/api paths are medium
-    assert contract["risk"] == "high"  # api/openapi.yaml is a hotspot
+    assert contract["risk"] == "medium"  # model said low; api/openapi.yaml is medium
 
 
 async def test_infra_work_is_out_of_scope_and_never_ready(ui: Board) -> None:
@@ -182,3 +190,41 @@ async def test_plan_requests_are_maintainer_only(ui: Board) -> None:
     task = await ui.create(cards.API_SEARCH)
     response = await ui.http.post(f"/api/tasks/{task['id']}/plan", headers=AS_USER)
     assert response.status_code == 403
+
+
+async def test_a_confirmed_urgent_card_goes_on_to_plan_review_and_gets_a_plan(ui: Board) -> None:
+    task = await ui.create(cards.URGENT_FIX)
+    assert task["column"] == "plan_review"
+    assert (task["priority"], task["route"]) == ("P1", "now")
+    plan = await ui.http.get(f"/api/tasks/{task['id']}/plan", headers=AS_MAINTAINER)
+    assert plan.status_code == 200
+    assert plan.json()["acceptance_criteria"]
+
+
+async def test_the_testers_urgent_card_also_goes_on_to_plan_review(ui: Board) -> None:
+    # Triage routes the maintainer's and the tester's cards the same way.
+    task = await ui.create(cards.URGENT_FIX, headers=AS_USER)
+    assert (task["column"], task["route"]) == ("plan_review", "now")
+    plan = await ui.http.get(f"/api/tasks/{task['id']}/plan", headers=AS_MAINTAINER)
+    assert plan.status_code == 200
+
+
+# The board colours a column red when the dragged card can't go there, so each card carries
+# the columns the caller may move it to, straight from the server's state machine.
+async def test_cards_carry_the_columns_the_caller_may_move_them_to(ui: Board) -> None:
+    task = await ui.create(cards.API_SEARCH)  # lands in triaged
+    assert task["column"] == "triaged"
+    as_maintainer = (await ui.http.get(f"/api/tasks/{task['id']}", headers=AS_MAINTAINER)).json()
+    as_user = (await ui.http.get(f"/api/tasks/{task['id']}", headers=AS_USER)).json()
+    assert "plan_review" in as_maintainer["allowed_columns"]
+    assert "plan_review" not in as_user["allowed_columns"]  # maintainer-only move
+    for allowed in (as_maintainer["allowed_columns"], as_user["allowed_columns"]):
+        assert "triaged" not in allowed  # never its own column
+        assert "done" not in allowed
+        assert "agent_dev" not in allowed
+
+
+async def test_the_board_list_carries_allowed_columns_too(ui: Board) -> None:
+    await ui.create(cards.API_SEARCH)
+    page = (await ui.http.get("/api/tasks", headers=AS_MAINTAINER)).json()
+    assert all("allowed_columns" in item for item in page["items"])

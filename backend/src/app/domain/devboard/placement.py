@@ -41,6 +41,18 @@ async def place_last(
     return await _rebalance(store, user_id, order, task_id)
 
 
+async def place_first(
+    store: TaskStore, user_id: uuid.UUID, column: Column, task_id: uuid.UUID
+) -> str:
+    others = [(rank, other) for rank, other in await store.column_ranks(user_id, column)]
+    others = [(rank, other) for rank, other in others if other != task_id]
+    candidate = key_between(None, others[0][0]) if others else key_after(None)
+    if candidate is not None:
+        return candidate
+    order = [task_id] + [other for _, other in others]
+    return await _rebalance(store, user_id, order, task_id)
+
+
 async def _rebalance(
     store: TaskStore, user_id: uuid.UUID, order: list[uuid.UUID], moving: uuid.UUID
 ) -> str:

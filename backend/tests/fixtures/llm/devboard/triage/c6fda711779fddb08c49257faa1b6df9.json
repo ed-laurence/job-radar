@@ -1,0 +1,8 @@
+{
+  "feature": "triage",
+  "input_tokens": 900,
+  "model": "claude-sonnet-5-5",
+  "output_tokens": 300,
+  "prompt_hash": "c6fda711779fddb08c49257faa1b6df9",
+  "text": "{\"type\": \"test\", \"size\": \"S\", \"risk\": \"low\", \"areas\": [\"api\"], \"priority\": \"P3\", \"severity\": \"trivial\", \"impact\": \"Developers would see slow tests sooner.\", \"route\": \"later\", \"route_reason\": \"Nice to have.\", \"verification\": {\"status\": \"confirmed\", \"evidence\": \"No timing summary is configured.\", \"code_refs\": [], \"duplicate_of\": null}, \"needs_human_design\": false, \"out_of_scope\": false, \"likely_paths\": [\"backend/tests/conftest.py\"]}"
+}

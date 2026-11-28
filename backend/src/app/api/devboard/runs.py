@@ -92,8 +92,9 @@ async def approve_task_plan(
         plan_version=body.plan_version,
         task_version=body.task_version,
         rank=body.rank,
+        allow_test_changes=body.allow_test_changes is True,
     )
-    return mapping.task(approved)
+    return mapping.task(approved, actor(principal))
 
 
 @router.post(
@@ -107,7 +108,7 @@ async def kill_task(
     task_id: TaskId, body: KillRequest, principal: AgentMaintainer, services: Services
 ) -> Task:
     killed = await services.workflow.kill(actor(principal), task_id, body.version, body.reason)
-    return mapping.task(killed)
+    return mapping.task(killed, actor(principal))
 
 
 @router.get(

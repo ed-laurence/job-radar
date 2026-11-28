@@ -46,7 +46,11 @@ from app.domain.ports import PII, Clock, Ids
 from app.domain.ports.devboard import TaskStore
 
 REDACTED = "[redacted]"
-MAINTAINER_LABEL_PREFIXES = ("modify-tests:", "allow:")
+MODIFY_TESTS = "modify-tests:"
+MAINTAINER_LABEL_PREFIXES = (MODIFY_TESTS, "allow:")
+# The spec's limits on `labels` (TaskCreate / TaskUpdate): count and characters per label.
+MAX_LABELS = 20
+MAX_LABEL_CHARS = 100
 
 
 class BoardHooks(Protocol):

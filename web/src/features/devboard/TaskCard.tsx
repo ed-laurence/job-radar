@@ -3,6 +3,9 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import Link from "next/link";
+import type { KeyboardEvent, MouseEvent } from "react";
+import { CardContent } from "./CardContent";
+import { guardClickAfterDrag } from "./clickGuard";
 import styles from "./DevBoard.module.css";
 import type { Task } from "./model";
 
@@ -12,7 +15,11 @@ export interface TaskCardProps {
   dropLocked: boolean;
 }
 
-/** One card. The handle is the drag source; the title links to the detail page. */
+/**
+ * One card. The whole card is the drag source (press and drag, or focus it and press Space or
+ * Enter); a plain click on the title still opens the detail page. While it is dragged, it stays
+ * in place as a muted placeholder and a copy (DragPreview) follows the pointer.
+ */
 export function TaskCard({ task, dropLocked }: TaskCardProps) {
   const {
     attributes,
@@ -27,49 +34,51 @@ export function TaskCard({ task, dropLocked }: TaskCardProps) {
     data: { type: "card", column: task.column },
     disabled: { draggable: false, droppable: dropLocked },
   });
+  // The card is an <article>, not a button: it contains a link, and buttons can't hold
+  // interactive content. So drop dnd-kit's button role and the button-only `aria-pressed`.
+  const { role: _role, "aria-pressed": _pressed, ...cardAttributes } = attributes;
   const locked = task.column === "out_of_scope";
   const className = [styles.card, isDragging && styles.cardDragging, locked && styles.cardLocked]
     .filter(Boolean)
     .join(" ");
   const labelId = `task-${task.id}-title`;
 
+  const onMouseDown = (event: MouseEvent<HTMLElement>) => {
+    guardClickAfterDrag(event.currentTarget, event.clientX, event.clientY);
+    listeners?.onMouseDown?.(event);
+  };
+  // Only the card itself picks up from the keyboard, so Enter on the focused title still follows it.
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.target === event.currentTarget) listeners?.onKeyDown?.(event);
+  };
+
   return (
     <li
       ref={setNodeRef}
-      className={className}
+      className={styles.cardItem}
       data-card-id={task.id}
       aria-labelledby={labelId}
       // Transform and transition are dynamic per drag frame (allowed by CODE-24).
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >
-      <button
-        type="button"
+      <article
         ref={setActivatorNodeRef}
-        className={styles.handle}
-        {...attributes}
+        className={className}
+        {...cardAttributes}
         {...listeners}
-        aria-label={`Move “${task.title}”`}
+        onMouseDown={onMouseDown}
+        onKeyDown={onKeyDown}
+        aria-labelledby={labelId}
       >
-        <span aria-hidden="true">⠿</span>
-      </button>
-      <div className={styles.cardBody}>
-        <Link id={labelId} href={`/dev-board/${task.id}`} className={styles.cardLink}>
-          {task.title}
-        </Link>
-        <ul className={styles.badges} aria-label="Details">
-          {locked ? <li className={`${styles.badge} ${styles.badgeDanger}`}>Locked</li> : null}
-          {task.type ? <li className={styles.badge}>{task.type}</li> : null}
-          {task.size ? <li className={styles.badge}>Size {task.size}</li> : null}
-          {task.risk ? <li className={styles.badge}>Risk {task.risk}</li> : null}
-          {task.active_run_id ? <li className={styles.badge}>Agent running</li> : null}
-        </ul>
-        {locked && task.out_of_scope_reason ? (
-          <p className={styles.meta}>Out of scope: {task.out_of_scope_reason}</p>
-        ) : null}
-        {task.column === "blocked" && task.blocked_reason ? (
-          <p className={styles.meta}>Blocked: {task.blocked_reason}</p>
-        ) : null}
-      </div>
+        <CardContent
+          task={task}
+          title={
+            <Link id={labelId} href={`/dev-board/${task.id}`} className={styles.cardLink}>
+              {task.title}
+            </Link>
+          }
+        />
+      </article>
     </li>
   );
 }

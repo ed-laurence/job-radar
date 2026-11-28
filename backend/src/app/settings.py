@@ -126,6 +126,18 @@ class Settings(BaseSettings):
         default_factory=lambda: Path.home() / ".cache" / "jobradar" / "agent-remote"
     )
     agent_run_timeout_s: int = Field(default=3600, ge=60, le=23 * 3600)
+    # Plan runs under AGENT_SANDBOX=docker: the sandboxed dev-lead (default) or the simulation.
+    # A plan run has no plan yet, so its USD budget and wall clock are these settings.
+    agent_planner: Literal["sandbox", "simulation"] = "sandbox"
+    # llm-proxy holds ~$0.30 per call up front, so $0.50 left the planner only ~8 turns.
+    agent_plan_budget_usd: float = Field(default=2.0, gt=0, le=20)
+    agent_plan_timeout_s: int = Field(default=600, ge=60, le=7200)
+    # Triage under AGENT_SANDBOX=docker: the read-only sandboxed triager (default; it can read
+    # the repo and run existing tests) or the in-app LLM triager. Ignored without docker.
+    agent_triager: Literal["sandbox", "in_app"] = "sandbox"
+    agent_triage_budget_usd: float = Field(default=0.5, gt=0, le=20)
+    agent_triage_timeout_s: int = Field(default=300, ge=60, le=7200)
+    agent_triage_model: str = Field(default="claude-sonnet-5-5", min_length=1, max_length=100)
     # HMAC key for per-task llm-proxy tokens (shared with llm-proxy only), and the key the
     # coordinator signs task-scoped sandbox tokens with.
     llm_proxy_secret: SecretStr | None = None

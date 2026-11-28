@@ -58,7 +58,7 @@ def coordinator_server(tools: coordinator_tools.CoordinatorTools) -> McpSdkServe
                 input_schema=spec.input_schema,
                 handler=handler(spec.name),
             )
-            for spec in coordinator_tools.SPECS
+            for spec in tools.specs
         ],
     )
 
@@ -83,7 +83,21 @@ async def run_agent(
     log: run_log.RunLog,
     spend_client: llm_usage.UsageClient,
 ) -> agent_runner.LoopOutcome:
-    tools = coordinator_tools.CoordinatorTools(client, tracker, on_step=log.step)
+    sink = (
+        coordinator_tools.PlanSink(settings.task_id, settings.repo, settings.plan_out)
+        if settings.is_plan and settings.plan_out is not None
+        else None
+    )
+    triage_sink = (
+        coordinator_tools.TriageSink(
+            settings.task_id, settings.repo, settings.triage_out, tracker.open_cards
+        )
+        if settings.is_triage and settings.triage_out is not None
+        else None
+    )
+    tools = coordinator_tools.CoordinatorTools(
+        client, tracker, on_step=log.step, plan_sink=sink, triage_sink=triage_sink
+    )
 
     async def pre_tool_use(
         data: HookInput, _tool_use_id: str | None, _ctx: HookContext

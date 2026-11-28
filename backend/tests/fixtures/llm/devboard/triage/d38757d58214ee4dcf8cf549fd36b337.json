@@ -1,8 +1,0 @@
-{
-  "feature": "triage",
-  "input_tokens": 900,
-  "model": "claude-sonnet-5-5",
-  "output_tokens": 300,
-  "prompt_hash": "d38757d58214ee4dcf8cf549fd36b337",
-  "text": "{\"type\": \"chore\", \"size\": \"M\", \"risk\": \"medium\", \"areas\": [], \"acceptance_criteria\": [{\"test_id\": \"backend/tests/unit/test_backup.py::schedules nightly\", \"expectation\": \"a scheduler trigger exists for the backup job\"}], \"needs_human_design\": false, \"out_of_scope\": true, \"out_of_scope_reason\": \"Needs infrastructure (Cloud Scheduler, OpenTofu).\", \"likely_paths\": [\"infra/modules/backup/\"]}"
-}

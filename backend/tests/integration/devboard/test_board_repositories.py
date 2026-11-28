@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
@@ -24,16 +25,21 @@ from app.domain.devboard.model import (
     LeaseKind,
     NewStep,
     PlanRecord,
+    Priority,
     Risk,
+    Route,
     RunKind,
     RunRecord,
     RunStatus,
+    Severity,
     Size,
     StepKind,
     Subtask,
     TaskRecord,
     TaskType,
     TriageRecord,
+    Verification,
+    VerificationStatus,
 )
 from app.domain.errors import Conflict, NotFound
 from app.domain.ports.devboard import LeaseClaim, RunFinish
@@ -82,7 +88,18 @@ async def test_task_versions_ranks_triage_and_plans(
         size=Size.S,
         risk=Risk.LOW,
         areas=(Area.API,),
-        criteria=(Criterion("backend/tests/unit/test_x.py::y", "z"),),
+        priority=Priority.P1,
+        severity=Severity.MAJOR,
+        impact="Every board user.",
+        route=Route.NOW,
+        route_reason="Confirmed and urgent.",
+        verification=Verification(
+            VerificationStatus.DUPLICATE,
+            "Same as another card.",
+            ("backend/src/app/api/devboard/tasks.py",),
+            uuid.uuid4(),
+        ),
+        likely_paths=("backend/src/app/api/devboard/", "web/src/features/devboard/Board.tsx"),
         needs_human_design=False,
         in_scope=True,
         created_at=NOW,
@@ -100,15 +117,26 @@ async def test_task_versions_ranks_triage_and_plans(
         30,
         Risk.MEDIUM,
         NOW,
+        tests_to_change=("backend/tests/unit/test_z.py",),
+        acceptance_criteria=(Criterion("backend/tests/unit/test_x.py::y", "z"),),
     )
     await store.add_plan(user, plan)
     assert await store.latest_plan(user, task.id) == plan
     approved = await store.save_plan(user, plan, 1)
     assert approved.version == 2
-    await store.delete(user, task.id, 2, NOW)
+    assert approved.tests_to_change == ("backend/tests/unit/test_z.py",)
+    assert approved.acceptance_criteria == plan.acceptance_criteria
+    rated = replace(loaded, priority=Priority.P1, severity=Severity.MAJOR, route=Route.NOW)
+    stored = await store.save(maintainer, rated, 2)
+    assert (stored.priority, stored.severity, stored.route) == (
+        Priority.P1,
+        Severity.MAJOR,
+        Route.NOW,
+    )
+    await store.delete(user, task.id, 3, NOW)
     assert await store.get(user, task.id) is None
     with pytest.raises(NotFound):
-        await store.delete(user, task.id, 3, NOW)
+        await store.delete(user, task.id, 4, NOW)
 
 
 async def test_one_active_top_level_run_and_numbered_steps(

@@ -78,6 +78,9 @@ def _is_list(value: object) -> bool:
     return isinstance(value, list)
 
 
+MAX_FIELD_ERRORS = 5
+
+
 def _problem(status: int, body: bytes) -> CoordinatorError:
     """RFC 9457: keep ``title``/``detail`` (server-written, no secrets), capped."""
     try:
@@ -85,6 +88,12 @@ def _problem(status: int, body: bytes) -> CoordinatorError:
     except (json.JSONDecodeError, UnicodeDecodeError):
         problem = {}
     parts = [str(problem[k])[:200] for k in ("title", "detail") if isinstance(problem.get(k), str)]
+    # Field errors (server-written pointer + message, never the input) tell the agent what to fix.
+    for item in as_list(problem.get("errors"))[:MAX_FIELD_ERRORS]:
+        error = as_object(item) or {}
+        pointer, message = error.get("pointer"), error.get("message")
+        if isinstance(pointer, str) and isinstance(message, str):
+            parts.append(f"{pointer[:100]}: {message[:150]}")
     if status == 413:
         parts.insert(0, "message too large: refused (shorten it; nothing was cut)")
     text = "; ".join(parts) or "request failed"
@@ -183,7 +192,8 @@ class CoordinatorClient:
     def handoff(
         self, handoff: Mapping[str, object], timeout: float | None = None
     ) -> dict[str, object]:
-        return self.request("POST", "/v1/handoff", {"handoff": dict(handoff)}, timeout=timeout)
+        # The body is the handoff object itself (docs/features/coordinator.md).
+        return self.request("POST", "/v1/handoff", dict(handoff), timeout=timeout)
 
     def help(self, text: str) -> dict[str, object]:
         return self.request("POST", "/v1/help", {"text": text})

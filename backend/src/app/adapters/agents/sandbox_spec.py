@@ -54,6 +54,13 @@ class SandboxConfig:
     llm_base_url: str = "http://llm-proxy:8080"
     coordinator_url: str = "http://coordinator:8100"
     run_timeout_s: int = 3600
+    # Plan runs have no plan yet: their llm-proxy budget and wall clock (capped by the above).
+    plan_budget_usd: float = 2.0
+    plan_timeout_s: int = 600
+    # Triage runs (the read-only triager): budget, wall clock and model (`AGENT_MODEL`).
+    triage_budget_usd: float = 0.5
+    triage_timeout_s: int = 300
+    triage_model: str = "claude-sonnet-5-5"
     docker: str = "docker"
     poll_s: float = 1.0
     work_root: Path | None = None

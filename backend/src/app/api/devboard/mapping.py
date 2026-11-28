@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from app.domain.devboard.model import (
+    COLUMN_ORDER,
+    Actor,
     PlanRecord,
     RunRecord,
     StepRecord,
     TaskEventRecord,
     TaskRecord,
     TriageRecord,
+    Verification,
 )
+from app.domain.devboard.state_machine import user_targets
 from app.generated.models import (
     AcceptanceCriterion,
     Plan,
@@ -28,7 +32,10 @@ def _provider(value: str | None) -> str | None:
     return value if value in _PROVIDERS else None
 
 
-def task(record: TaskRecord) -> Task:
+def task(record: TaskRecord, viewer: Actor) -> Task:
+    """`allowed_columns`: where `viewer` may move the card now (the state machine's user
+    targets for their role), so the board can mark the other columns as not allowed."""
+    allowed = user_targets(record, is_maintainer=viewer.is_maintainer) - {record.column}
     return Task.model_validate(
         {
             "id": record.id,
@@ -43,6 +50,10 @@ def task(record: TaskRecord) -> Task:
             "areas": [area.value for area in record.areas] or None,
             "labels": list(record.labels) or None,
             "needs_human_design": record.needs_human_design,
+            "priority": record.priority.value if record.priority else None,
+            "severity": record.severity.value if record.severity else None,
+            "route": record.route.value if record.route else None,
+            "allowed_columns": [c.value for c in COLUMN_ORDER if c in allowed],
             "out_of_scope_reason": record.out_of_scope_reason,
             "blocked_reason": record.blocked_reason,
             "pii_redacted": record.pii_redacted,
@@ -78,10 +89,13 @@ def triage(record: TriageRecord) -> TriageResult:
             "size": record.size.value,
             "risk": record.risk.value,
             "areas": [area.value for area in record.areas],
-            "acceptance_criteria": [
-                AcceptanceCriterion(test_id=c.test_id, expectation=c.expectation)
-                for c in record.criteria
-            ],
+            "priority": record.priority.value,
+            "severity": record.severity.value,
+            "impact": record.impact,
+            "route": record.route.value,
+            "route_reason": record.route_reason,
+            "verification": _verification(record.verification),
+            "likely_paths": list(record.likely_paths),
             "needs_human_design": record.needs_human_design,
             "in_scope": record.in_scope,
             "out_of_scope_reason": record.out_of_scope_reason,
@@ -90,6 +104,15 @@ def triage(record: TriageRecord) -> TriageResult:
             "created_at": record.created_at,
         }
     )
+
+
+def _verification(record: Verification) -> dict[str, object]:
+    return {
+        "status": record.status.value,
+        "evidence": record.evidence,
+        "code_refs": list(record.code_refs),
+        "duplicate_of": record.duplicate_of,
+    }
 
 
 def plan(record: PlanRecord) -> Plan:
@@ -109,7 +132,12 @@ def plan(record: PlanRecord) -> Plan:
                 }
                 for s in record.subtasks
             ],
+            "acceptance_criteria": [
+                AcceptanceCriterion(test_id=c.test_id, expectation=c.expectation)
+                for c in record.acceptance_criteria
+            ],
             "acceptance_tests": list(record.acceptance_tests),
+            "tests_to_change": list(record.tests_to_change),
             "budget": {"max_usd": record.budget_usd, "max_minutes": record.budget_minutes},
             "risk": record.risk.value,
             "tests_approved": record.tests_approved_at is not None,

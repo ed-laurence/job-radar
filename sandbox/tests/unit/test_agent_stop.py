@@ -203,7 +203,7 @@ def test_each_early_stop_becomes_a_readable_failed_handoff(
     # The runner posted a failed handoff itself, saying why in plain words.
     posts = [cc.as_object(b) for _, p, b in transport.calls if p == "/v1/handoff"]
     assert len(posts) == 1 and posts[0] is not None
-    posted = cc.as_object(posts[0]["handoff"])
+    posted = posts[0]  # the body is the handoff itself, not wrapped
     assert posted is not None and posted["status"] == "failed"
     assert str(posted["summary"]).startswith(detail)
     assert result["runner_posted_handoff"] is True

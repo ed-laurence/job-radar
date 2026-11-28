@@ -46,9 +46,16 @@ const triage: Schemas["TriageResult"] = {
   size: "S",
   risk: "low",
   areas: ["web"],
-  acceptance_criteria: [
-    { test_id: "web/tests/contacts.spec.ts::shows empty state", expectation: "Shows a hint" },
-  ],
+  priority: "P2",
+  severity: "minor",
+  impact: "Shows a hint to users with no contacts",
+  route: "now",
+  route_reason: "Small and unblocked.",
+  verification: {
+    status: "confirmed",
+    evidence: "The contacts list renders nothing when empty.",
+    code_refs: ["web/src/features/contacts/"],
+  },
   needs_human_design: false,
   in_scope: true,
   created_at: "2026-11-25T00:00:00Z",
@@ -100,7 +107,11 @@ beforeEach(() => {
         lease_paths: ["web/src/features/contacts/"],
       },
     ],
+    acceptance_criteria: [
+      { test_id: "web/tests/contacts.spec.ts::shows empty state", expectation: "Shows a hint" },
+    ],
     acceptance_tests: ["web/tests/contacts.spec.ts::shows empty state"],
+    tests_to_change: [],
     budget: { max_usd: 3, max_minutes: 30 },
     risk: "low",
     tests_approved: false,
@@ -161,6 +172,108 @@ describe("TaskDetailPage", () => {
     );
     expect(await screen.findByText(/The card moved to Ready/)).toBeInTheDocument();
     expect(track).toHaveBeenCalledWith("agent_run_approved");
+  });
+
+  it("hides the existing-tests section when the plan changes no tests", async () => {
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+    await screen.findByRole("button", { name: "Approve plan + tests" });
+    expect(screen.queryByRole("heading", { name: "Existing tests this plan changes" })).toBeNull();
+    expect(
+      screen.queryByRole("checkbox", { name: "Allow the agent to edit these tests" }),
+    ).toBeNull();
+  });
+
+  it("requires allowing test changes before approving, then sends allow_test_changes", async () => {
+    let approval: Schemas["PlanApproval"] | undefined;
+    if (plan) plan.tests_to_change = ["web/tests/e2e/contacts.spec.ts"];
+    server.use(
+      http.post(`${API}/tasks/:id/plan/approve`, async ({ request }) => {
+        approval = (await request.json()) as Schemas["PlanApproval"];
+        current = { ...current, column: "ready", version: 5 };
+        return HttpResponse.json(current);
+      }),
+    );
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+    const planSection = await screen.findByRole("region", { name: "Plan" });
+    expect(
+      await within(planSection).findByRole("heading", { name: "Existing tests this plan changes" }),
+    ).toBeVisible();
+    expect(within(planSection).getByText("web/tests/e2e/contacts.spec.ts")).toBeInTheDocument();
+    const box = within(planSection).getByRole("checkbox", {
+      name: "Allow the agent to edit these tests",
+    });
+    expect(box).not.toBeChecked();
+    expect(box).toHaveAccessibleDescription(/read-only/);
+    const button = within(planSection).getByRole("button", { name: "Approve plan + tests" });
+    expect(button).toBeDisabled();
+
+    const user = userEvent.setup();
+    await user.click(box);
+    expect(button).toBeEnabled();
+    await user.click(button);
+    await waitFor(() =>
+      expect(approval).toEqual({
+        plan_version: 2,
+        task_version: 4,
+        approve_tests: true,
+        approve_plan: true,
+        allow_test_changes: true,
+      }),
+    );
+  });
+
+  it("needs no extra consent when a modify-tests label already covers the listed tests", async () => {
+    let approval: Schemas["PlanApproval"] | undefined;
+    if (plan) plan.tests_to_change = ["web/tests/e2e/contacts.spec.ts", "web/tests/unit/a.test.ts"];
+    current = { ...current, labels: ["modify-tests:web/tests/e2e/, web/tests/unit/a.test.ts"] };
+    server.use(
+      http.post(`${API}/tasks/:id/plan/approve`, async ({ request }) => {
+        approval = (await request.json()) as Schemas["PlanApproval"];
+        return HttpResponse.json({ ...current, column: "ready", version: 5 });
+      }),
+    );
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+    const planSection = await screen.findByRole("region", { name: "Plan" });
+    expect(
+      await within(planSection).findByRole("heading", { name: "Existing tests this plan changes" }),
+    ).toBeVisible();
+    expect(within(planSection).queryByRole("checkbox")).toBeNull();
+    const button = within(planSection).getByRole("button", { name: "Approve plan + tests" });
+    expect(button).toBeEnabled();
+    await userEvent.setup().click(button);
+    await waitFor(() => expect(approval).toBeDefined());
+    expect(approval).not.toHaveProperty("allow_test_changes");
+  });
+
+  it("still requires consent when only some listed tests are covered by a label", async () => {
+    if (plan) plan.tests_to_change = ["web/tests/e2e/contacts.spec.ts", "web/tests/unit/a.test.ts"];
+    current = { ...current, labels: ["modify-tests:web/tests/e2e"] };
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+    expect(
+      await screen.findByRole("checkbox", { name: "Allow the agent to edit these tests" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve plan + tests" })).toBeDisabled();
+  });
+
+  it("shows the server's reason when it refuses the test changes", async () => {
+    if (plan) plan.tests_to_change = ["web/tests/e2e/contacts.spec.ts"];
+    server.use(
+      http.post(`${API}/tasks/:id/plan/approve`, () =>
+        problemResponse(422, "validation", {
+          detail: "allow_test_changes is required for web/tests/e2e/contacts.spec.ts",
+        }),
+      ),
+    );
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("checkbox", { name: "Allow the agent to edit these tests" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Approve plan + tests" }));
+    const planSection = screen.getByRole("region", { name: "Plan" });
+    expect(await within(planSection).findByRole("alert")).toHaveTextContent(
+      "allow_test_changes is required for web/tests/e2e/contacts.spec.ts",
+    );
   });
 
   it("explains a stale plan approval", async () => {

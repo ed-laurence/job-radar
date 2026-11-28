@@ -29,6 +29,7 @@ from app.adapters.db.base import (
 )
 
 type JsonList = list[object]
+type JsonDict = dict[str, object]
 
 
 def _nullable_one_of(column: str, values: tuple[str, ...]) -> CheckConstraint:
@@ -44,6 +45,9 @@ class DevTask(Base):
         _nullable_one_of("type", vocab.TASK_TYPE),
         _nullable_one_of("size", vocab.TASK_SIZE),
         _nullable_one_of("risk", vocab.TASK_RISK),
+        _nullable_one_of("priority", vocab.TASK_PRIORITY),
+        _nullable_one_of("severity", vocab.TASK_SEVERITY),
+        _nullable_one_of("route", vocab.TRIAGE_ROUTE),
         subset_of("areas", vocab.TASK_AREA),
         Index("ix_dev_tasks_column_rank", "column", "rank"),
     )
@@ -61,6 +65,9 @@ class DevTask(Base):
     areas: Mapped[list[str]] = mapped_column(TEXT_ARRAY, server_default=text("'{}'::text[]"))
     labels: Mapped[list[str]] = mapped_column(TEXT_ARRAY, server_default=text("'{}'::text[]"))
     needs_human_design: Mapped[bool] = mapped_column(server_default=text("false"))
+    priority: Mapped[str | None]
+    severity: Mapped[str | None]
+    route: Mapped[str | None]
     out_of_scope_reason: Mapped[str | None]
     pii_redacted: Mapped[bool] = mapped_column(server_default=text("false"))
     pr_url: Mapped[str | None]
@@ -97,6 +104,9 @@ class TaskTriage(Base):
         _nullable_one_of("type", vocab.TASK_TYPE),
         _nullable_one_of("size", vocab.TASK_SIZE),
         _nullable_one_of("risk", vocab.TASK_RISK),
+        _nullable_one_of("priority", vocab.TASK_PRIORITY),
+        _nullable_one_of("severity", vocab.TASK_SEVERITY),
+        _nullable_one_of("route", vocab.TRIAGE_ROUTE),
         subset_of("areas", vocab.TASK_AREA),
         Index("ix_task_triage_task_created", "task_id", "created_at"),
     )
@@ -107,9 +117,18 @@ class TaskTriage(Base):
     size: Mapped[str | None]
     risk: Mapped[str | None]
     areas: Mapped[list[str]] = mapped_column(TEXT_ARRAY, server_default=text("'{}'::text[]"))
+    # Triage no longer writes acceptance criteria (the planner does); kept for older rows.
     acceptance_criteria: Mapped[JsonList] = mapped_column(
         JSONB_COL, server_default=text("'[]'::jsonb")
     )
+    priority: Mapped[str | None]
+    severity: Mapped[str | None]
+    impact: Mapped[str | None]
+    route: Mapped[str | None]
+    route_reason: Mapped[str | None]
+    # {"status", "evidence", "duplicate_of", "code_refs"}; null on rows from before 0008.
+    verification: Mapped[JsonDict | None] = mapped_column(JSONB_COL)
+    likely_paths: Mapped[list[str]] = mapped_column(TEXT_ARRAY, server_default=text("'{}'::text[]"))
     needs_human_design: Mapped[bool] = mapped_column(server_default=text("false"))
     in_scope: Mapped[bool]
     out_of_scope_reason: Mapped[str | None]
@@ -130,7 +149,13 @@ class TaskPlan(Base):
     task_id: Mapped[uuid.UUID] = ref("dev_tasks.id")
     mode: Mapped[str]
     subtasks: Mapped[JsonList] = mapped_column(JSONB_COL, server_default=text("'[]'::jsonb"))
+    acceptance_criteria: Mapped[JsonList] = mapped_column(
+        JSONB_COL, server_default=text("'[]'::jsonb")
+    )
     acceptance_tests: Mapped[list[str]] = mapped_column(
+        TEXT_ARRAY, server_default=text("'{}'::text[]")
+    )
+    tests_to_change: Mapped[list[str]] = mapped_column(
         TEXT_ARRAY, server_default=text("'{}'::text[]")
     )
     budget_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4))
