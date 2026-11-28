@@ -1,0 +1,1022 @@
+{
+  "_about": "Synthetic job-ad bodies for scripts/build_seed.py. Each seeded role is matched to the first template whose `match` regex hits its lower-cased title (`fallback` by track otherwise), and its description and the five must-haves on its evidence strip come from here. Placeholders: {company}, {title}, {years}. Hand-written; no real employers, people or ad text.",
+  "fallback": {
+    "Exec": "senior-manager-ops",
+    "default": "general-professional"
+  },
+  "templates": [
+    {
+      "id": "forward-deployed",
+      "match": [
+        "forward deployed",
+        "\\bfde\\b"
+      ],
+      "about": "{company} builds software that customers run in production on day one, and its forward deployed engineers are how that happens.",
+      "responsibilities": [
+        "Embed with customer teams to understand their workflows, data and constraints",
+        "Configure, extend and integrate the platform to solve the customer's real problem",
+        "Write production Python and TypeScript that ships into customer environments",
+        "Feed what you learn in the field back to the core product and engineering teams",
+        "Run workshops and demos with technical and non-technical stakeholders"
+      ],
+      "must_haves": [
+        "{years}+ years building and shipping production software",
+        "Strong Python, with working knowledge of TypeScript",
+        "Experience working directly with customers or end users on technical delivery",
+        "Comfort with ambiguity: scoping and delivering from loosely defined problems",
+        "Able to explain technical trade-offs clearly to non-technical audiences"
+      ],
+      "nice_to_haves": [
+        "Experience with LLM-based applications",
+        "Consulting or professional services background",
+        "Willingness to travel to customer sites"
+      ]
+    },
+    {
+      "id": "ai-architect",
+      "match": [
+        "ai architect",
+        "ml architect",
+        "machine learning architect"
+      ],
+      "about": "{company} is putting generative AI into the hands of thousands of staff and needs someone to make sure it is built well, safely and once.",
+      "responsibilities": [
+        "Define the reference architecture for AI and LLM solutions across the organisation",
+        "Choose models, platforms and patterns (retrieval, agents, evaluation) and document why",
+        "Review solution designs for security, privacy, cost and responsible-AI risks",
+        "Guide delivery teams from proof of concept to supported production service",
+        "Advise senior stakeholders on AI strategy, roadmap and investment"
+      ],
+      "must_haves": [
+        "{years}+ years in solution or enterprise architecture roles",
+        "Hands-on experience designing LLM or machine-learning systems in production",
+        "Deep knowledge of at least one major cloud platform (AWS, Azure or GCP)",
+        "Experience with AI governance, security and privacy controls",
+        "Track record of influencing senior stakeholders and setting technical direction"
+      ],
+      "nice_to_haves": [
+        "Retrieval-augmented generation and evaluation frameworks",
+        "Public sector or regulated-industry experience",
+        "Cloud architecture certification"
+      ]
+    },
+    {
+      "id": "ai-engineer",
+      "match": [
+        "\\bai\\b.*engineer",
+        "artificial intelligence engineer",
+        "llm engineer",
+        "genai",
+        "generative ai",
+        "ai product engineer",
+        "ai/ml engineer",
+        "ai developer"
+      ],
+      "about": "{company} is building AI features that real users rely on every day, and the team is growing.",
+      "responsibilities": [
+        "Build and ship LLM-powered features, from prompt design to production service",
+        "Design retrieval, tool-use and agent workflows that are reliable and observable",
+        "Create evaluation sets and automated evals that catch regressions before release",
+        "Work with product and design to turn user problems into measurable AI outcomes",
+        "Keep latency, cost and safety in check as usage grows"
+      ],
+      "must_haves": [
+        "{years}+ years of software engineering experience, mostly in Python",
+        "Shipped at least one LLM-based application to production users",
+        "Experience with retrieval-augmented generation and vector search",
+        "Built evaluation or testing approaches for non-deterministic model output",
+        "Cloud deployment experience (containers, APIs, CI/CD)"
+      ],
+      "nice_to_haves": [
+        "Agent frameworks and tool calling",
+        "Fine-tuning or model distillation",
+        "TypeScript and React for product work"
+      ]
+    },
+    {
+      "id": "ml-engineer",
+      "match": [
+        "machine learning",
+        "\\bml\\b",
+        "mlops"
+      ],
+      "about": "{company} trains and serves models that sit at the centre of its product, and needs engineers who can take them from notebook to production.",
+      "responsibilities": [
+        "Build training, evaluation and deployment pipelines for machine-learning models",
+        "Serve models at scale with monitoring for drift, latency and quality",
+        "Work with data scientists to productionise experiments quickly and safely",
+        "Own the feature store and model registry",
+        "Improve the reliability and cost of the ML platform"
+      ],
+      "must_haves": [
+        "{years}+ years in machine-learning or data engineering roles",
+        "Strong Python and experience with PyTorch, TensorFlow or scikit-learn",
+        "Built and operated ML pipelines in production (MLOps)",
+        "Experience with a cloud ML platform such as SageMaker, Vertex AI or Azure ML",
+        "Solid software engineering practice: testing, code review, CI/CD"
+      ],
+      "nice_to_haves": [
+        "Kubernetes and model serving frameworks",
+        "Experience with LLMs",
+        "Real-time inference"
+      ]
+    },
+    {
+      "id": "lead-data-scientist",
+      "match": [
+        "lead data scien",
+        "principal data scien",
+        "head of data science",
+        "data science lead",
+        "data science manager"
+      ],
+      "about": "{company} wants data science to drive decisions, not just reports, and is looking for someone to lead that work.",
+      "responsibilities": [
+        "Lead a team of data scientists delivering models that change business decisions",
+        "Set the analytical roadmap with product and executive stakeholders",
+        "Review methods for rigour, from experiment design to model validation",
+        "Coach the team and grow their technical and communication skills",
+        "Take models into production with engineering partners"
+      ],
+      "must_haves": [
+        "{years}+ years in data science, including time leading others",
+        "Strong statistics and machine-learning fundamentals",
+        "Advanced Python and SQL",
+        "Delivered models that were used in production or in real business decisions",
+        "Able to communicate complex results to executives"
+      ],
+      "nice_to_haves": [
+        "Causal inference or experimentation platforms",
+        "Cloud ML tooling",
+        "Postgraduate degree in a quantitative field"
+      ]
+    },
+    {
+      "id": "data-scientist",
+      "match": [
+        "data scien",
+        "quantitative analyst",
+        "statistician",
+        "ai scientist",
+        "research scientist",
+        "machine learning scientist"
+      ],
+      "about": "{company} has rich data and hard questions, and is growing its data science team to answer them.",
+      "responsibilities": [
+        "Build predictive and descriptive models that answer real business questions",
+        "Design experiments and measure the impact of product changes",
+        "Work with data engineers on clean, reliable features",
+        "Present findings to stakeholders in plain language",
+        "Help move successful models into production"
+      ],
+      "must_haves": [
+        "{years}+ years in a data science or analytics role",
+        "Strong Python and SQL",
+        "Solid grounding in statistics and machine learning",
+        "Experience turning analysis into decisions with stakeholders",
+        "Comfortable working with large, messy datasets"
+      ],
+      "nice_to_haves": [
+        "Cloud data platforms",
+        "Experiment design and A/B testing",
+        "Domain experience in the sector"
+      ]
+    },
+    {
+      "id": "databricks",
+      "match": [
+        "databricks",
+        "spark"
+      ],
+      "about": "{company} runs its analytics on a lakehouse and needs a specialist to make the platform fast, governed and trusted.",
+      "responsibilities": [
+        "Design and build Delta Lake pipelines on Databricks",
+        "Implement Unity Catalog governance, access control and lineage",
+        "Tune Spark jobs and clusters for performance and cost",
+        "Set engineering standards: testing, CI/CD and code review for notebooks and jobs",
+        "Advise teams on lakehouse patterns and migration from legacy warehouses"
+      ],
+      "must_haves": [
+        "{years}+ years of data engineering experience",
+        "Hands-on Databricks and Apache Spark (PySpark) in production",
+        "Strong SQL and data modelling",
+        "Experience with Delta Lake and Unity Catalog",
+        "CI/CD and infrastructure-as-code for data platforms"
+      ],
+      "nice_to_haves": [
+        "Databricks certification",
+        "Streaming pipelines",
+        "Consulting experience"
+      ]
+    },
+    {
+      "id": "geospatial",
+      "match": [
+        "geospatial",
+        "\\bgis\\b",
+        "spatial"
+      ],
+      "about": "{company} turns satellite, sensor and survey data into decisions about land, water and infrastructure.",
+      "responsibilities": [
+        "Build pipelines that ingest and process large raster and vector datasets",
+        "Develop spatial analysis services used by scientists and planners",
+        "Optimise storage and query of spatial data in the cloud",
+        "Work with domain experts to validate outputs",
+        "Publish data products with clear documentation and metadata"
+      ],
+      "must_haves": [
+        "{years}+ years in data engineering or geospatial development",
+        "Strong Python with GDAL, GeoPandas, Rasterio or similar",
+        "Experience with PostGIS or another spatial database",
+        "Processed large datasets in a cloud environment",
+        "Good software engineering habits: version control, testing, automation"
+      ],
+      "nice_to_haves": [
+        "Earth observation or remote sensing",
+        "Cloud-optimised formats (COG, Zarr)",
+        "Climate or environmental science background"
+      ]
+    },
+    {
+      "id": "data-architect",
+      "match": [
+        "data architect",
+        "data modell",
+        "data modeler",
+        "information architect",
+        "database"
+      ],
+      "about": "{company} is modernising its data estate and needs an architect to design something that lasts.",
+      "responsibilities": [
+        "Design the target data architecture and the path to get there",
+        "Own conceptual, logical and physical data models across domains",
+        "Set standards for data quality, metadata, lineage and security",
+        "Guide engineering teams through design reviews",
+        "Work with business owners to align data with outcomes"
+      ],
+      "must_haves": [
+        "{years}+ years in data architecture or senior data engineering",
+        "Expert data modelling (dimensional, Data Vault or similar)",
+        "Experience with a modern cloud data platform (Snowflake, Databricks, BigQuery or Synapse)",
+        "Data governance, privacy and security design",
+        "Strong stakeholder engagement and documentation"
+      ],
+      "nice_to_haves": [
+        "Enterprise architecture frameworks",
+        "Master data management",
+        "Public sector experience"
+      ]
+    },
+    {
+      "id": "analytics-engineer",
+      "match": [
+        "analytics engineer",
+        "\\bbi\\b",
+        "business intelligence",
+        "reporting",
+        "power bi",
+        "data analyst",
+        "data specialist",
+        "\\banalyst\\b"
+      ],
+      "about": "{company} wants every team to trust the same numbers, and is investing in its analytics layer.",
+      "responsibilities": [
+        "Build and maintain tested, documented data models in dbt",
+        "Design dashboards and self-service datasets for business teams",
+        "Define metrics with stakeholders and keep them consistent",
+        "Monitor data quality and fix issues at the source",
+        "Train analysts and business users"
+      ],
+      "must_haves": [
+        "{years}+ years in analytics engineering, BI or data analysis",
+        "Advanced SQL",
+        "Experience with dbt or a similar transformation tool",
+        "Built dashboards in Power BI, Tableau or Looker",
+        "Able to turn vague questions into clear metrics"
+      ],
+      "nice_to_haves": [
+        "Python",
+        "Cloud data warehouses",
+        "Semantic layers"
+      ]
+    },
+    {
+      "id": "data-engineer",
+      "match": [
+        "data engineer",
+        "data platform",
+        "etl",
+        "data developer"
+      ],
+      "about": "{company} depends on timely, trustworthy data and is growing the team that delivers it.",
+      "responsibilities": [
+        "Design, build and operate batch and streaming data pipelines",
+        "Model data for analytics and machine learning use cases",
+        "Automate testing, deployment and monitoring of data workflows",
+        "Improve data quality and observability across the platform",
+        "Work closely with analysts, scientists and product teams"
+      ],
+      "must_haves": [
+        "{years}+ years of data engineering experience",
+        "Strong Python and SQL",
+        "Built pipelines on a cloud platform (AWS, Azure or GCP)",
+        "Experience with orchestration tools such as Airflow or Dagster",
+        "Data modelling for analytics"
+      ],
+      "nice_to_haves": [
+        "Spark or Databricks",
+        "Streaming with Kafka or Kinesis",
+        "Infrastructure as code"
+      ]
+    },
+    {
+      "id": "sre",
+      "match": [
+        "site reliability",
+        "\\bsre\\b",
+        "reliability engineer"
+      ],
+      "about": "{company} runs services that customers expect to just work, and reliability is a first-class engineering goal.",
+      "responsibilities": [
+        "Define and track SLOs and error budgets with service teams",
+        "Build observability: metrics, logs, traces and actionable alerts",
+        "Lead incident response and blameless post-incident reviews",
+        "Automate toil and improve deployment safety",
+        "Plan capacity and test resilience"
+      ],
+      "must_haves": [
+        "{years}+ years in SRE, operations or infrastructure engineering",
+        "Production experience with Kubernetes and a major cloud provider",
+        "Strong scripting or programming in Go or Python",
+        "Built monitoring and alerting with Prometheus, Grafana, Datadog or similar",
+        "Participated in on-call and led incident response"
+      ],
+      "nice_to_haves": [
+        "Terraform",
+        "Chaos engineering",
+        "Service mesh"
+      ]
+    },
+    {
+      "id": "platform-devops",
+      "match": [
+        "platform engineer",
+        "devops",
+        "cloud engineer",
+        "infrastructure engineer",
+        "devsecops",
+        "build engineer",
+        "infrastructure",
+        "cloud &",
+        "cloud and"
+      ],
+      "about": "{company} wants its engineers to ship safely many times a day, and the platform team makes that possible.",
+      "responsibilities": [
+        "Build and run the internal developer platform and CI/CD pipelines",
+        "Manage cloud infrastructure as code",
+        "Harden security, secrets management and access control",
+        "Improve developer experience with templates, tooling and documentation",
+        "Keep cloud spend visible and under control"
+      ],
+      "must_haves": [
+        "{years}+ years in platform, DevOps or cloud engineering",
+        "Infrastructure as code with Terraform or similar",
+        "Hands-on AWS, Azure or GCP in production",
+        "Built CI/CD pipelines (GitHub Actions, GitLab CI or Azure DevOps)",
+        "Containers and Kubernetes"
+      ],
+      "nice_to_haves": [
+        "Policy as code",
+        "Cost optimisation",
+        "Cloud certifications"
+      ]
+    },
+    {
+      "id": "security-engineer",
+      "match": [
+        "security",
+        "cyber",
+        "appsec"
+      ],
+      "about": "{company} handles sensitive data and treats security as part of how software is built.",
+      "responsibilities": [
+        "Embed secure design and threat modelling in the delivery lifecycle",
+        "Run and improve SAST, DAST, dependency and secret scanning",
+        "Harden cloud configurations and identity controls",
+        "Respond to and learn from security incidents",
+        "Coach engineers on secure coding"
+      ],
+      "must_haves": [
+        "{years}+ years in security or software engineering with a security focus",
+        "Cloud security experience on AWS, Azure or GCP",
+        "Hands-on threat modelling and secure code review",
+        "Knowledge of OWASP Top 10 and common attack patterns",
+        "Able to explain risk to engineers and executives"
+      ],
+      "nice_to_haves": [
+        "Security certifications",
+        "Essential Eight or ISO 27001",
+        "Scripting in Python"
+      ]
+    },
+    {
+      "id": "integration-engineer",
+      "match": [
+        "integration",
+        "\\bapi\\b",
+        "middleware",
+        "salesforce",
+        "dynamics"
+      ],
+      "about": "{company} connects dozens of systems, and needs an engineer who makes those connections dependable.",
+      "responsibilities": [
+        "Design and build integrations between internal and third-party systems",
+        "Develop and document APIs and event-driven interfaces",
+        "Monitor integrations and resolve failures quickly",
+        "Work with vendors and system owners on interface changes",
+        "Improve integration standards and reusable components"
+      ],
+      "must_haves": [
+        "{years}+ years building system integrations",
+        "REST API design and development",
+        "Experience with an integration platform or message broker",
+        "Strong programming in Python, Java or C#",
+        "Troubleshooting production issues across system boundaries"
+      ],
+      "nice_to_haves": [
+        "Event streaming",
+        "CRM or ERP integrations",
+        "Cloud integration services"
+      ]
+    },
+    {
+      "id": "solution-architect",
+      "match": [
+        "solution architect",
+        "solutions architect",
+        "technical architect",
+        "enterprise architect",
+        "cloud architect",
+        "\\barchitect\\b"
+      ],
+      "about": "{company} is delivering a portfolio of technology change and needs architects who can connect strategy to working systems.",
+      "responsibilities": [
+        "Design end-to-end solutions that meet business, security and cost requirements",
+        "Produce architecture artefacts and lead design reviews",
+        "Assess options, vendors and trade-offs and make clear recommendations",
+        "Guide delivery teams through build and transition",
+        "Keep the solution aligned with enterprise standards"
+      ],
+      "must_haves": [
+        "{years}+ years in solution architecture or senior engineering",
+        "Designed cloud-based solutions on AWS, Azure or GCP",
+        "Integration and API architecture experience",
+        "Security and non-functional requirements in design",
+        "Strong written and verbal communication with stakeholders"
+      ],
+      "nice_to_haves": [
+        "TOGAF or a cloud architecture certification",
+        "Data and AI solution design",
+        "Government experience"
+      ]
+    },
+    {
+      "id": "cio-cto",
+      "match": [
+        "chief information",
+        "chief technology",
+        "chief digital",
+        "chief data",
+        "\\bcio\\b",
+        "\\bcto\\b",
+        "\\bcdo\\b"
+      ],
+      "about": "{company} is looking for an executive to lead technology as a driver of the organisation's strategy.",
+      "responsibilities": [
+        "Set the technology, data and digital strategy with the executive team and board",
+        "Lead the technology function, its leaders and its budget",
+        "Govern major programs, vendors and technology risk",
+        "Build a culture of delivery, security and continuous improvement",
+        "Represent technology with partners, regulators and the community"
+      ],
+      "must_haves": [
+        "{years}+ years in technology leadership, including executive roles",
+        "Led large technology teams and budgets",
+        "Delivered major digital or technology transformation",
+        "Experience reporting to a board or executive committee",
+        "Strong governance, risk and vendor management"
+      ],
+      "nice_to_haves": [
+        "Data and AI strategy",
+        "Sector experience",
+        "Postgraduate qualifications in business or technology"
+      ]
+    },
+    {
+      "id": "head-of-engineering",
+      "match": [
+        "head of engineering",
+        "head of technology",
+        "head of software",
+        "director of engineering",
+        "engineering director",
+        "vp engineering",
+        "vp of engineering",
+        "general manager",
+        "head of digital",
+        "head of platform",
+        "head of product engineering",
+        "co-?founder",
+        "\\bgm\\b"
+      ],
+      "about": "{company} is scaling and needs a leader to build an engineering organisation that delivers predictably.",
+      "responsibilities": [
+        "Lead engineering managers and teams across the product",
+        "Own engineering strategy, structure and hiring",
+        "Set delivery practices, quality standards and technical direction",
+        "Partner with product and the executive team on the roadmap",
+        "Manage the engineering budget and key vendors"
+      ],
+      "must_haves": [
+        "{years}+ years in software engineering, with several leading managers",
+        "Built and scaled engineering teams through growth",
+        "Delivered complex products with modern engineering practices",
+        "Strategic planning and budget ownership",
+        "Strong executive communication"
+      ],
+      "nice_to_haves": [
+        "SaaS or platform business",
+        "Data and AI products",
+        "Hands-on technical background"
+      ]
+    },
+    {
+      "id": "head-of-data-ai",
+      "match": [
+        "head of data",
+        "head of ai",
+        "head of analytics",
+        "director of data",
+        "data and ai lead",
+        "data & ai",
+        "practice lead",
+        "head of insights",
+        "director.*(artificial intelligence|\\bai\\b|data)",
+        "(artificial intelligence|\\bai\\b|data|analytics).*(manager|director|leader)",
+        "data strategy",
+        "data (and|&) analytics",
+        "analytics and insights"
+      ],
+      "about": "{company} is building a data and AI capability that the whole organisation can draw on.",
+      "responsibilities": [
+        "Set the data and AI strategy and roadmap",
+        "Lead data engineering, analytics and data science teams",
+        "Establish data governance, quality and responsible-AI practices",
+        "Prioritise use cases with business leaders and measure value",
+        "Manage platforms, partners and budget"
+      ],
+      "must_haves": [
+        "{years}+ years in data, analytics or AI, including leading teams",
+        "Delivered data or AI products that created measurable value",
+        "Data governance and privacy experience",
+        "Modern cloud data and ML platforms",
+        "Executive stakeholder management"
+      ],
+      "nice_to_haves": [
+        "Generative AI programs",
+        "Consulting or practice-building",
+        "Regulated industry"
+      ]
+    },
+    {
+      "id": "mission-head",
+      "match": [
+        "head of the",
+        "head of program",
+        "program director",
+        "head of service",
+        "head of research",
+        "chief executive",
+        "\\bceo\\b",
+        "executive director"
+      ],
+      "about": "{company} is a purpose-led organisation and needs a leader who can turn mission into delivered outcomes.",
+      "responsibilities": [
+        "Lead the service or program and its multidisciplinary team",
+        "Set direction with the board, funders and partner organisations",
+        "Use data and technology to improve outcomes and reporting",
+        "Manage budgets, risk and compliance",
+        "Represent the organisation with government, partners and the public"
+      ],
+      "must_haves": [
+        "{years}+ years in senior leadership roles",
+        "Led multidisciplinary teams to deliver complex programs",
+        "Strong stakeholder and partnership management, including government",
+        "Budget, risk and governance responsibility",
+        "Commitment to the organisation's mission"
+      ],
+      "nice_to_haves": [
+        "Technology or data background",
+        "Not-for-profit or public sector experience",
+        "Domain expertise in the mission area"
+      ]
+    },
+    {
+      "id": "engineering-manager",
+      "match": [
+        "engineering manager",
+        "software manager",
+        "development manager",
+        "manager, engineering",
+        "manager of engineering",
+        "application engineering manager",
+        "delivery manager"
+      ],
+      "about": "{company} is looking for a manager who cares about people and delivery in equal measure.",
+      "responsibilities": [
+        "Lead and grow a team of software engineers",
+        "Run hiring, one-on-ones, performance and career development",
+        "Own delivery: planning, flow and predictability",
+        "Partner with product and design on priorities",
+        "Keep engineering quality and technical health high"
+      ],
+      "must_haves": [
+        "{years}+ years in software engineering, including people leadership",
+        "Managed engineers through hiring, growth and performance conversations",
+        "Delivered software with agile practices",
+        "Technical enough to guide design decisions",
+        "Clear communication with stakeholders"
+      ],
+      "nice_to_haves": [
+        "Managing managers",
+        "Distributed teams",
+        "Cloud-native products"
+      ]
+    },
+    {
+      "id": "tech-lead",
+      "match": [
+        "tech lead",
+        "technical lead",
+        "engineering lead",
+        "lead engineer",
+        "lead developer",
+        "lead software",
+        "team lead",
+        "squad lead",
+        "\\blead\\b"
+      ],
+      "about": "{company} needs a hands-on lead to set direction for a team and still ship code.",
+      "responsibilities": [
+        "Lead the technical direction of a delivery team",
+        "Design systems and review code for quality and maintainability",
+        "Break down work and unblock engineers",
+        "Mentor engineers and lift team practices",
+        "Work with product on scope, trade-offs and estimates"
+      ],
+      "must_haves": [
+        "{years}+ years of software engineering",
+        "Led the technical work of a team",
+        "Strong in at least one of Python, TypeScript, Java or C#",
+        "System design and code review experience",
+        "Mentored other engineers"
+      ],
+      "nice_to_haves": [
+        "Cloud architecture",
+        "Agile delivery",
+        "Domain knowledge"
+      ]
+    },
+    {
+      "id": "staff-principal",
+      "match": [
+        "staff",
+        "principal",
+        "distinguished",
+        "fellow"
+      ],
+      "about": "{company} is looking for a senior technical leader who raises the bar across several teams.",
+      "responsibilities": [
+        "Drive technical strategy across multiple teams",
+        "Lead the design of critical systems and cross-team changes",
+        "Write and review code on the hardest problems",
+        "Mentor senior engineers and build technical leadership",
+        "Write clear proposals and help the organisation decide"
+      ],
+      "must_haves": [
+        "{years}+ years of software engineering, much of it senior or lead",
+        "Designed and delivered large-scale distributed systems",
+        "Deep expertise in at least one backend language",
+        "Influenced technical direction across several teams",
+        "Excellent written communication (design docs, proposals)"
+      ],
+      "nice_to_haves": [
+        "Cloud platform depth",
+        "Reliability and performance engineering",
+        "Open-source contributions"
+      ]
+    },
+    {
+      "id": "frontend",
+      "match": [
+        "front.?end",
+        "\\bui\\b",
+        "react",
+        "web developer",
+        "angular"
+      ],
+      "about": "{company} cares about the experience its users have, and its web team builds it.",
+      "responsibilities": [
+        "Build fast, accessible web interfaces in React and TypeScript",
+        "Work with designers to turn designs into polished components",
+        "Maintain the design system and shared front-end tooling",
+        "Write tests and monitor real-user performance",
+        "Collaborate with backend engineers on APIs"
+      ],
+      "must_haves": [
+        "{years}+ years of front-end development",
+        "Strong TypeScript and React",
+        "Accessibility (WCAG) in practice",
+        "Testing front-end code (unit and end-to-end)",
+        "Experience consuming and shaping REST or GraphQL APIs"
+      ],
+      "nice_to_haves": [
+        "Next.js",
+        "Design systems",
+        "Performance tuning"
+      ]
+    },
+    {
+      "id": "fullstack",
+      "match": [
+        "full.?stack"
+      ],
+      "about": "{company} ships product end to end in small teams, and full-stack engineers own features from database to browser.",
+      "responsibilities": [
+        "Build features across the API, database and web front end",
+        "Design data models and APIs with performance in mind",
+        "Write tests and keep the codebase healthy",
+        "Deploy and monitor what you build",
+        "Work with product and design on what to build next"
+      ],
+      "must_haves": [
+        "{years}+ years of full-stack development",
+        "TypeScript and React on the front end",
+        "Backend development in Node.js, Python or similar",
+        "Relational databases and SQL",
+        "Cloud deployment and CI/CD"
+      ],
+      "nice_to_haves": [
+        "Next.js",
+        "Postgres",
+        "Startup experience"
+      ]
+    },
+    {
+      "id": "backend-jvm",
+      "match": [
+        "java",
+        "kotlin",
+        "scala",
+        "\\.net",
+        "c#"
+      ],
+      "about": "{company} runs high-volume backend services and is growing the team that builds them.",
+      "responsibilities": [
+        "Design and build backend services and APIs",
+        "Improve performance, reliability and observability",
+        "Write well-tested, maintainable code",
+        "Take part in design reviews and on-call",
+        "Collaborate with product and other engineering teams"
+      ],
+      "must_haves": [
+        "{years}+ years of backend development",
+        "Strong Java, Kotlin or C#",
+        "Designed and built REST APIs and microservices",
+        "Relational databases and SQL",
+        "Cloud and containers in production"
+      ],
+      "nice_to_haves": [
+        "Event-driven architecture",
+        "Kubernetes",
+        "Financial services experience"
+      ]
+    },
+    {
+      "id": "product-manager",
+      "match": [
+        "product manager",
+        "product owner",
+        "product lead",
+        "head of product",
+        "product director",
+        "vp of product",
+        "vp product",
+        "channel owner"
+      ],
+      "about": "{company} wants product decisions grounded in user needs and evidence, and is hiring to lead them.",
+      "responsibilities": [
+        "Own the product vision, roadmap and backlog for your area",
+        "Talk to users and turn insight into clear problems to solve",
+        "Work daily with engineering and design to ship and learn",
+        "Define success metrics and measure outcomes",
+        "Align stakeholders on priorities and trade-offs"
+      ],
+      "must_haves": [
+        "{years}+ years in product management or product ownership",
+        "Shipped software products with cross-functional teams",
+        "User research and discovery experience",
+        "Data-informed decision-making with clear metrics",
+        "Strong stakeholder management and communication"
+      ],
+      "nice_to_haves": [
+        "Technical background",
+        "AI or data products",
+        "B2B SaaS"
+      ]
+    },
+    {
+      "id": "project-delivery",
+      "match": [
+        "project manager",
+        "program manager",
+        "programme manager",
+        "delivery lead",
+        "scrum master",
+        "project director",
+        "pmo"
+      ],
+      "about": "{company} is delivering a significant program of change and needs someone to keep it on track.",
+      "responsibilities": [
+        "Plan and run projects from initiation to closure",
+        "Manage scope, schedule, budget, risks and dependencies",
+        "Lead cross-functional teams and vendors",
+        "Report progress clearly to sponsors and steering committees",
+        "Improve delivery practices across the portfolio"
+      ],
+      "must_haves": [
+        "{years}+ years managing technology projects",
+        "Delivered projects to time and budget with clear reporting",
+        "Agile and traditional delivery methods",
+        "Vendor and stakeholder management",
+        "Risk and issue management"
+      ],
+      "nice_to_haves": [
+        "PMP, PRINCE2 or agile certification",
+        "Government projects",
+        "Technical background"
+      ]
+    },
+    {
+      "id": "business-development",
+      "match": [
+        "business development",
+        "account",
+        "sales",
+        "partnership",
+        "client director",
+        "pre.?sales",
+        "consult"
+      ],
+      "about": "{company} helps clients get value from technology, and needs someone who can win and shape that work.",
+      "responsibilities": [
+        "Build relationships with clients and understand their goals",
+        "Shape and win new engagements and proposals",
+        "Work with delivery teams to scope realistic solutions",
+        "Grow existing accounts through trusted advice",
+        "Represent the company at events and in the market"
+      ],
+      "must_haves": [
+        "{years}+ years in business development, consulting or account management",
+        "Technical credibility in data, cloud or software",
+        "Written and won proposals",
+        "An established network in the target market",
+        "Excellent communication and presentation"
+      ],
+      "nice_to_haves": [
+        "Public sector buying processes",
+        "Data and AI services",
+        "Partner ecosystem experience"
+      ]
+    },
+    {
+      "id": "it-manager",
+      "match": [
+        "information technology",
+        "\\bit\\b",
+        "technology manager",
+        "technology platforms",
+        "digital workplace",
+        "service delivery",
+        "technology leader",
+        "head of strategy, products and architecture",
+        "automation engineering",
+        "digital engineering"
+      ],
+      "about": "{company} depends on technology that works every day, and needs a leader to run it well and keep improving it.",
+      "responsibilities": [
+        "Lead technology operations, service delivery and support teams",
+        "Own the technology roadmap, budget and vendor contracts",
+        "Keep systems secure, resilient and compliant",
+        "Drive modernisation of platforms and ways of working",
+        "Report on service performance to senior leadership"
+      ],
+      "must_haves": [
+        "{years}+ years in technology management or IT leadership",
+        "Ran technology services or platforms for a medium to large organisation",
+        "Vendor, contract and budget management",
+        "IT security, risk and compliance experience",
+        "Strong stakeholder communication with business leaders"
+      ],
+      "nice_to_haves": [
+        "ITIL or service management practice",
+        "Cloud migration experience",
+        "Sector experience"
+      ]
+    },
+    {
+      "id": "senior-manager-ops",
+      "match": [
+        "manager",
+        "director",
+        "head of"
+      ],
+      "about": "{company} needs a leader who can run a function well and improve it at the same time.",
+      "responsibilities": [
+        "Lead the team and its day-to-day operations",
+        "Set objectives and measure performance",
+        "Drive improvement in processes and systems",
+        "Manage budget, risk and vendors",
+        "Work with senior stakeholders across the organisation"
+      ],
+      "must_haves": [
+        "{years}+ years in management roles",
+        "Led teams through change",
+        "Budget and resource management",
+        "Process and service improvement",
+        "Senior stakeholder engagement"
+      ],
+      "nice_to_haves": [
+        "Technology background",
+        "Sector experience",
+        "Relevant tertiary qualifications"
+      ]
+    },
+    {
+      "id": "backend-python",
+      "match": [
+        "software",
+        "engineer",
+        "developer",
+        "programmer",
+        "python",
+        "backend",
+        "back.?end"
+      ],
+      "about": "{company} builds products used by thousands of people every day, and its engineering team is growing.",
+      "responsibilities": [
+        "Design, build and run backend services and APIs",
+        "Write clean, tested and maintainable code",
+        "Take features from idea to production with product and design",
+        "Improve performance, reliability and observability",
+        "Review code and help teammates grow"
+      ],
+      "must_haves": [
+        "{years}+ years of professional software development",
+        "Strong Python (or a comparable backend language)",
+        "Designed and built REST APIs",
+        "Relational databases and SQL",
+        "Cloud, containers and CI/CD in production"
+      ],
+      "nice_to_haves": [
+        "TypeScript",
+        "Event-driven systems",
+        "LLM or data products"
+      ]
+    },
+    {
+      "id": "general-professional",
+      "match": [],
+      "about": "{company} is a well-regarded employer with a supportive team and room to grow.",
+      "responsibilities": [
+        "Deliver the core responsibilities of the role to a high standard",
+        "Work closely with colleagues and stakeholders across the organisation",
+        "Keep accurate records and follow relevant policies and procedures",
+        "Identify and help implement improvements to how the team works",
+        "Contribute to a positive, inclusive team culture"
+      ],
+      "must_haves": [
+        "{years}+ years of experience in a similar role",
+        "A relevant qualification or equivalent experience",
+        "Clear written and verbal communication",
+        "Strong organisation and time management",
+        "Able to work independently and as part of a team"
+      ],
+      "nice_to_haves": [
+        "Sector experience",
+        "Familiarity with common business software",
+        "Current driver's licence"
+      ]
+    }
+  ]
+}
