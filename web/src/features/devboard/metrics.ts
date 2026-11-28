@@ -36,7 +36,6 @@ export function tiles(m: DevMetrics): [string, string][] {
     ["Lead time p90", hours(m.lead_time_hours_p90)],
     ["Agent pass rate", pct(m.agent_pass_rate)],
     ["Avg review rounds", opt(m.avg_review_rounds)?.toFixed(1) ?? "—"],
-    ["Out-of-scope rate", pct(m.out_of_scope_rate)],
     ["Avg cost per task", usd(m.avg_cost_per_task_usd)],
     ["Blocked", String(m.blocked_count)],
     ["Oldest in human review", hours(m.oldest_human_review_hours)],

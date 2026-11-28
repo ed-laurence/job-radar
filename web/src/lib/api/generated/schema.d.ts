@@ -3025,8 +3025,6 @@ export interface components {
             /** @description Agent reviews passed first time. */
             agent_pass_rate?: number | null;
             avg_review_rounds?: number | null;
-            /** @description Share of triaged cards marked out of scope. */
-            out_of_scope_rate?: number | null;
             avg_cost_per_task_usd?: number | null;
             run_outcomes: {
                 /** @enum {string} */

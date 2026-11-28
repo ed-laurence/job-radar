@@ -26,7 +26,6 @@ const METRICS: Schemas["DevMetrics"] = {
   lead_time_hours_p90: 96,
   agent_pass_rate: 0.75,
   avg_review_rounds: 1.4,
-  out_of_scope_rate: 0.1,
   avg_cost_per_task_usd: 0.82,
   run_outcomes: [
     { outcome: "succeeded", count: 8 },
@@ -100,7 +99,7 @@ describe("BoardMetrics", () => {
     expect(await value("Lead time p90")).toBe("4.0 days");
     expect(await value("Agent pass rate")).toBe("75%");
     expect(await value("Avg review rounds")).toBe("1.4");
-    expect(await value("Out-of-scope rate")).toBe("10%");
+    expect(terms.map((t) => t.textContent)).not.toContain("Out-of-scope rate");
     expect(await value("Avg cost per task")).toBe("$0.82");
     expect(await value("Blocked")).toBe("1");
     expect(await value("Oldest in human review")).toBe("—");

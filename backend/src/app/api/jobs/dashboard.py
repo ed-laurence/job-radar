@@ -193,7 +193,6 @@ async def get_dev_metrics(request: Request, principal: DefaultUser, window: Rang
             "lead_time_hours_p90": view.lead_time_hours_p90,
             "agent_pass_rate": view.agent_pass_rate,
             "avg_review_rounds": view.avg_review_rounds,
-            "out_of_scope_rate": view.out_of_scope_rate,
             "avg_cost_per_task_usd": view.avg_cost_per_task_usd,
             "run_outcomes": [
                 RunOutcome.model_validate({"outcome": o, "count": n}) for o, n in view.run_outcomes
