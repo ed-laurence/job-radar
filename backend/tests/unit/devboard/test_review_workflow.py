@@ -18,7 +18,7 @@ from app.domain.devboard.model import (
 )
 from app.domain.devboard.review_flow import NEEDS_DECISION, NO_REVIEW
 from app.domain.errors import Forbidden, ValidationFailed
-from app.domain.ports.devboard import AgentResult
+from app.domain.ports.devboard import AgentResult, github_branch
 from tests.unit.devboard.workflow_harness import (
     BASE_SHA,
     MAINTAINER,
@@ -53,6 +53,7 @@ async def test_a_dev_run_stores_its_branch_and_starts_the_review() -> None:
     dev = await harness.latest_run(task, DEV)
     assert task.branch == branch_name(dev)
     assert task.base_sha == BASE_SHA
+    assert task.pr_branch is None
     assert await harness.kinds(task) == [TRIAGE, DEV, REVIEW]
     review_run = await harness.latest_run(task, REVIEW)
     assert review_run.round == 1
@@ -60,6 +61,25 @@ async def test_a_dev_run_stores_its_branch_and_starts_the_review() -> None:
     context = harness.runner.seen[-1]
     assert context.run.kind is REVIEW
     assert context.review is None
+
+
+async def test_a_pushed_dev_run_stores_its_github_branch() -> None:
+    harness = Harness()
+    harness.runner.pushes = True
+    task = await harness.start_dev()
+    dev = await harness.latest_run(task, DEV)
+    assert task.pr_branch == github_branch(task.id, dev.id)
+
+
+async def test_a_rework_keeps_the_cards_github_branch() -> None:
+    harness = Harness()
+    harness.runner.pushes = True
+    harness.runner.reviews = [reviewed(blocker())]
+    task = await harness.start_dev()
+    runs = await harness.runs.for_task(MAINTAINER.user_id, task.id, 0, 20)
+    dev_runs = [run for run in reversed(runs) if run.kind is DEV]
+    assert len(dev_runs) == 2
+    assert task.pr_branch == github_branch(task.id, dev_runs[0].id)
 
 
 async def test_a_clean_review_moves_the_card_to_human_review() -> None:

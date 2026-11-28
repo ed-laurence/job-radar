@@ -7,8 +7,9 @@ differences:
   tree, so uncommitted local changes never reach an agent PR.
 - `push` adds the publish commit on top of a checked scratch branch (`git commit-tree`, unchanged
   tree, fixed publisher identity, the trailers agent-pr.yml reads), moves the scratch branch to
-  it (so a rework run starts from it and its push fast-forwards), then pushes it to
-  `agent/task-<uuid>` on GitHub. Never forced: a non-fast-forward push fails.
+  it (so a rework run starts from it and its push fast-forwards), then pushes it to the run's
+  GitHub branch: a new `agent/task-<uuid>-<run8>` for a fresh run, the card's own for a rework.
+  Never forced: a non-fast-forward push fails.
 
 Every GitHub call uses GIT_SSH_COMMAND with the deploy key, IdentitiesOnly, the pinned
 known_hosts file and StrictHostKeyChecking=yes, plus LocalGitHost's no-global-config env. Only
@@ -31,7 +32,7 @@ from app.adapters.codehost.local_git import (
     Snapshot,
     check_agent_ref,
 )
-from app.domain.ports.devboard import github_branch
+from app.domain.ports.devboard import is_github_branch
 
 GITHUB_TRACKING_REF = "refs/remotes/github/main"
 PUBLISHER_NAME = "jobradar-publisher"
@@ -143,11 +144,13 @@ class GitHubHost(LocalGitHost):
         return await self._bundle_ref(GITHUB_TRACKING_REF, sha, dest)
 
     # ------------------------------------------------------------ publish commit + push
-    async def push(self, branch: str, trailers: PublishTrailers) -> PushedBranch:
-        """Add the publish commit on `branch` (a checked scratch branch) and push it to the
-        card's GitHub branch. A non-fast-forward or any failure raises `GitError`."""
+    async def push(self, branch: str, target: str, trailers: PublishTrailers) -> PushedBranch:
+        """Add the publish commit on `branch` (a checked scratch branch) and push it to `target`,
+        one of this card's GitHub branches. A non-fast-forward or any failure raises
+        `GitError`; a `target` of any other shape raises `ValueError`."""
         check_agent_ref(branch, "branch")
-        target = github_branch(trailers.task_id)
+        if not is_github_branch(trailers.task_id, target):
+            raise ValueError("push target is not this card's GitHub branch")
         check_agent_ref(target, "target")
         await self._require_access()
         head = (await self._remote_git("rev-parse", "--verify", f"refs/heads/{branch}")).strip()

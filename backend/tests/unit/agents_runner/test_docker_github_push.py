@@ -1,12 +1,15 @@
 """CODE_HOST=github in the runner: after the Publisher's checks pass, a done dev run gets the
-publish commit and is pushed to `agent/task-<id>` (docs/features/github-prs.md steps 3-4).
-Local mode (no pusher) pushes nothing. A failed push fails the run with a safe message and keeps
-the scratch branch. The message and trailer format satisfy agent-pr.yml's checks."""
+publish commit and is pushed to GitHub (docs/features/github-prs.md steps 3-4). A fresh run
+pushes a new branch, `agent/task-<id>-<run8>`; a rework run pushes to the card's `pr_branch`, so
+its PR updates. Nothing is ever forced. Local mode (no pusher) pushes nothing. A failed push fails
+the run with a safe message and keeps the scratch branch. The message and trailer format satisfy
+agent-pr.yml's checks."""
 
 from __future__ import annotations
 
 import re
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -25,13 +28,15 @@ from app.adapters.codehost.github import (
     publish_message,
     ssh_command,
 )
-from app.domain.devboard.model import Subtask
+from app.domain.devboard.model import ReviewRecord, ReviewVerdict, Subtask
 from app.domain.devboard.publisher import parse_dev_run_outcome
 from app.domain.ports.devboard import ChangeSet, FileChange, github_branch
 from tests.unit.agents_runner.fakes import (
     BASE_SHA,
     PROXY_SECRET,
+    RUN_ID,
     TASK_ID,
+    CardState,
     FakeCodeHost,
     FakeCoordinatorTokens,
     FakeProcessRunner,
@@ -49,7 +54,9 @@ WALL = 1_800_000_000.0
 BRANCH = "agent/11111111-aaaaaaaa"
 FEATURE = "web/src/features/board/Card.tsx"
 LEASED = plan(subtasks=(Subtask("s1", "Badge", "frontend-engineer", ("web/src/features/board/",)),))
-PUSHED = f"Pushed agent/task-{TASK_ID}; the PR opens from agent-pr.yml."
+FRESH = github_branch(TASK_ID, RUN_ID)
+EARLIER = f"agent/task-{TASK_ID}-0badc0de"
+PUSHED = f"Pushed {FRESH}; the PR opens from agent-pr.yml."
 CLEAN = ChangeSet(files=(FileChange(FEATURE, "M", 3, 1),), added_lines=((FEATURE, "const a = 1;"),))
 
 
@@ -69,8 +76,11 @@ class Harness:
         config = SandboxConfig(image="jobradar-sandbox-writer:dev", poll_s=0.01)
         self.runner = DockerAgentRunner(config, deps, PROXY_SECRET, wall=lambda: WALL)
 
-    async def run(self) -> SandboxResult:
-        result = await self.runner.run(context(plan_record=LEASED), FakeTools())
+    async def run(
+        self, card: CardState | None = None, review: ReviewRecord | None = None
+    ) -> SandboxResult:
+        run_context = context(plan_record=LEASED, card=card, review=review)
+        result = await self.runner.run(run_context, FakeTools())
         assert isinstance(result, SandboxResult)
         return result
 
@@ -82,8 +92,9 @@ async def test_github_mode_pushes_a_clean_done_run_with_its_counts() -> None:
     assert result.is_success, result.outcome
     assert (result.branch, result.base_sha) == (BRANCH, BASE_SHA)
     assert pusher.pushed == [
-        (BRANCH, PublishTrailers(task_id=TASK_ID, passed=5, failed=0, diff_lines=4))
+        (BRANCH, FRESH, PublishTrailers(task_id=TASK_ID, passed=5, failed=0, diff_lines=4))
     ]
+    assert result.pr_branch == FRESH
     assert PUSHED in result.outcome
     # The reviewer still reads the diff stat and test counts back.
     parsed = parse_dev_run_outcome(result.outcome)
@@ -92,9 +103,53 @@ async def test_github_mode_pushes_a_clean_done_run_with_its_counts() -> None:
     assert (parsed.files_changed, parsed.insertions, parsed.deletions) == (1, 10, 2)
 
 
+def _review() -> ReviewRecord:
+    return ReviewRecord(
+        id=uuid.uuid4(),
+        task_id=TASK_ID,
+        run_id=uuid.uuid4(),
+        round=1,
+        verdict=ReviewVerdict.CHANGES_REQUESTED,
+        summary="One blocker.",
+        findings=(),
+        created_at=datetime(2026, 1, 5, tzinfo=UTC),
+    )
+
+
+async def test_a_fresh_run_on_a_card_already_pushed_gets_a_new_branch() -> None:
+    pusher = FakePusher()
+    card = CardState(branch="agent/11111111-0badc0de", base_sha=BASE_SHA, pr_branch=EARLIER)
+    result = await Harness(pusher=pusher).run(card)
+    assert result.is_success, result.outcome
+    assert [target for _, target, _ in pusher.pushed] == [FRESH]
+    assert FRESH != EARLIER
+    assert result.pr_branch == FRESH
+
+
+async def test_a_rework_run_pushes_to_the_cards_github_branch() -> None:
+    pusher = FakePusher()
+    card = CardState(branch="agent/11111111-0badc0de", base_sha=BASE_SHA, pr_branch=EARLIER)
+    harness = Harness(pusher=pusher)
+    result = await harness.run(card, _review())
+    assert result.is_success, result.outcome
+    assert harness.host.branch_bundles == [(card.branch, BASE_SHA)]
+    assert [target for _, target, _ in pusher.pushed] == [EARLIER]
+    assert result.pr_branch == EARLIER
+    assert f"Pushed {EARLIER};" in result.outcome
+
+
+async def test_a_rework_of_a_card_never_pushed_gets_a_new_branch() -> None:
+    pusher = FakePusher()
+    card = CardState(branch="agent/11111111-0badc0de", base_sha=BASE_SHA)
+    result = await Harness(pusher=pusher).run(card, _review())
+    assert [target for _, target, _ in pusher.pushed] == [FRESH]
+    assert result.pr_branch == FRESH
+
+
 async def test_local_mode_pushes_nothing() -> None:
     result = await Harness().run()
     assert result.is_success
+    assert result.pr_branch is None
     assert "Pushed" not in result.outcome
     assert parse_dev_run_outcome(result.outcome) is not None
 
@@ -122,9 +177,10 @@ async def test_a_failed_push_fails_the_run_and_keeps_the_scratch_branch() -> Non
     result = await harness.run()
     assert not result.is_success
     assert result.outcome.startswith(
-        f"Could not push agent/task-{TASK_ID} to GitHub (git push failed (exit 1))."
+        f"Could not push {FRESH} to GitHub (git push failed (exit 1))."
     )
     assert result.branch == BRANCH
+    assert result.pr_branch is None
     assert harness.host.deleted == []
     for secret in (PROXY_SECRET.decode(), FakeCoordinatorTokens().token):
         assert secret not in result.outcome
@@ -144,7 +200,11 @@ def test_the_publish_message_satisfies_agent_pr_yml() -> None:
     assert message.splitlines()[0] == f"jobradar: publish task-{task}"
     value = _trailer(message, "Jobradar-Task")
     assert re.fullmatch(r"task-[0-9a-f-]{8,36}", value)
-    assert github_branch(task) == f"agent/{value}"
+    run = uuid.UUID("12345678-0000-4000-8000-000000000000")
+    branch = github_branch(task, run)
+    assert branch == f"agent/{value}-12345678"
+    # agent-pr.yml's branch check.
+    assert re.fullmatch(rf"agent/{value}-[0-9a-f]{{8}}", branch)
     assert _trailer(message, "Jobradar-Verdict") == "pass"
     assert _trailer(message, "Jobradar-Tests") == "12/14"
     assert _trailer(message, "Jobradar-Diff-Lines") == "88"

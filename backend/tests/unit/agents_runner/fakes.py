@@ -225,15 +225,15 @@ class FakePusher:
     """Stands in for GitHubHost.push: records what would be pushed, or fails like git."""
 
     fail: bool = False
-    pushed: list[tuple[str, PublishTrailers]] = field(
-        default_factory=list[tuple[str, PublishTrailers]]
+    pushed: list[tuple[str, str, PublishTrailers]] = field(
+        default_factory=list[tuple[str, str, PublishTrailers]]
     )
 
-    async def push(self, branch: str, trailers: PublishTrailers) -> PushedBranch:
+    async def push(self, branch: str, target: str, trailers: PublishTrailers) -> PushedBranch:
         if self.fail:
             raise GitError("git push failed (exit 1)")
-        self.pushed.append((branch, trailers))
-        return PushedBranch(branch=f"agent/task-{trailers.task_id}", sha="d" * 40)
+        self.pushed.append((branch, target, trailers))
+        return PushedBranch(branch=target, sha="d" * 40)
 
 
 @dataclass
@@ -314,6 +314,7 @@ class CardState:
     base_sha: str | None = None
     labels: tuple[str, ...] = ()
     review_round: int = 0
+    pr_branch: str | None = None
 
 
 def context(
@@ -343,6 +344,7 @@ def context(
             base_sha=card.base_sha,
             labels=card.labels,
             review_round=card.review_round,
+            pr_branch=card.pr_branch,
         )
     actor = Actor(user_id=USER_ID, kind=ActorKind.SYSTEM)
     chosen = plan_record if plan_record is not None else (plan() if with_plan else None)

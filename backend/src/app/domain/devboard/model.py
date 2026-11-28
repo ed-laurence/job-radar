@@ -219,6 +219,8 @@ class TaskRecord:
     pr_url: str | None = None
     branch: str | None = None
     base_sha: str | None = None
+    # The GitHub branch of the card's current attempt (CODE_HOST=github); PR sync follows it.
+    pr_branch: str | None = None
     review_round: int = 0
     active_run_id: uuid.UUID | None = None
 

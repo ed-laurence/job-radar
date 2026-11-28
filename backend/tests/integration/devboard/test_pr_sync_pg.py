@@ -30,8 +30,9 @@ URL = "https://github.com/acme/radar/pull/"
 
 
 def _card(column: Column, owner: uuid.UUID, rank: str) -> TaskRecord:
+    task_id = uuid.uuid4()
     return TaskRecord(
-        uuid.uuid4(),
+        task_id,
         "Card",
         "Body",
         column,
@@ -42,7 +43,14 @@ def _card(column: Column, owner: uuid.UUID, rank: str) -> TaskRecord:
         NOW,
         labels=("ui",),
         branch="agent/scratch",
+        # Read back from Postgres by the sync: the column must round-trip.
+        pr_branch=github_branch(task_id, uuid.uuid4()),
     )
+
+
+def _pushed(task: TaskRecord) -> str:
+    assert task.pr_branch is not None
+    return task.pr_branch
 
 
 async def test_a_pass_persists_and_a_second_changes_nothing(
@@ -56,8 +64,8 @@ async def test_a_pass_persists_and_a_second_changes_nothing(
     for task in (merged, closed):
         await tasks.insert(user, task)
     prs = FakePullRequests()
-    prs.put(github_branch(merged.id), PullRequest(f"{URL}1", 1, PullRequestState.MERGED))
-    prs.put(github_branch(closed.id), PullRequest(f"{URL}2", 2, PullRequestState.CLOSED))
+    prs.put(_pushed(merged), PullRequest(f"{URL}1", 1, PullRequestState.MERGED))
+    prs.put(_pushed(closed), PullRequest(f"{URL}2", 2, PullRequestState.CLOSED))
     board = BoardService(tasks, FakePII(), FakeClock(), UuidIds())
     service = PrSyncService(tasks, board, prs)
 

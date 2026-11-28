@@ -74,6 +74,8 @@ class DevTask(Base):
     # The latest published agent branch and its base (LocalGitHost / GitHubHost).
     branch: Mapped[str | None]
     base_sha: Mapped[str | None]
+    # The card's current GitHub branch (CODE_HOST=github).
+    pr_branch: Mapped[str | None]
     review_round: Mapped[int] = mapped_column(server_default=text("0"))
     created_by: Mapped[uuid.UUID] = ref("users.id", ondelete="RESTRICT")
     deleted_at: Mapped[datetime | None] = stamp()

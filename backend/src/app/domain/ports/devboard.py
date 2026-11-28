@@ -313,6 +313,8 @@ class AgentResult:
     # Dev runs: the published branch and its base. Review runs: the review.
     branch: str | None = None
     base_sha: str | None = None
+    # CODE_HOST=github: the GitHub branch the dev run pushed (None when nothing was pushed).
+    pr_branch: str | None = None
     review: ReviewDraft | None = None
 
 
@@ -395,6 +397,19 @@ class PullRequests(Protocol):
         ...
 
 
-def github_branch(task_id: uuid.UUID) -> str:
-    """One GitHub branch per card; rework pushes fast-forward onto it, so the PR updates."""
-    return f"agent/task-{task_id}"
+def github_branch(task_id: uuid.UUID, run_id: uuid.UUID) -> str:
+    """The GitHub branch a fresh dev run pushes: one per attempt, named after the run that began
+    it. Rework runs push to the card's `pr_branch` instead (fast-forward), so that PR updates;
+    nothing is ever force-pushed (docs/features/github-prs.md)."""
+    return f"agent/task-{task_id}-{run_id.hex[:8]}"
+
+
+def is_github_branch(task_id: uuid.UUID, branch: str) -> bool:
+    """Whether `branch` is one of this card's GitHub branches (`github_branch` shape)."""
+    prefix = f"agent/task-{task_id}-"
+    suffix = branch.removeprefix(prefix)
+    return (
+        branch.startswith(prefix)
+        and len(suffix) == 8
+        and all(c in "0123456789abcdef" for c in suffix)
+    )

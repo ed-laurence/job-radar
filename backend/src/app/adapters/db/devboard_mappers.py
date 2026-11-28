@@ -109,6 +109,7 @@ def task_record(row: Row[DevTask, str, uuid.UUID]) -> TaskRecord:
         pr_url=task.pr_url,
         branch=task.branch,
         base_sha=task.base_sha,
+        pr_branch=task.pr_branch,
         review_round=task.review_round,
         active_run_id=row[2],
     )
@@ -136,6 +137,7 @@ def task_values(task: TaskRecord) -> dict[str, object]:
         "pr_url": task.pr_url,
         "branch": task.branch,
         "base_sha": task.base_sha,
+        "pr_branch": task.pr_branch,
         "review_round": task.review_round,
         "updated_at": task.updated_at,
     }
