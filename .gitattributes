@@ -1,0 +1,3 @@
+# Always LF in the working tree, whatever core.autocrlf says: scripts and the sandbox image
+# build read these files inside Linux (a CRLF checkout breaks them).
+* text=auto eol=lf
