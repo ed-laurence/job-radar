@@ -1587,9 +1587,6 @@ class DevMetrics(BaseModel):
         None, description="Agent reviews passed first time.", ge=0.0, le=1.0
     )
     avg_review_rounds: float | None = Field(None, ge=0.0)
-    out_of_scope_rate: float | None = Field(
-        None, description="Share of triaged cards marked out of scope.", ge=0.0, le=1.0
-    )
     avg_cost_per_task_usd: float | None = Field(None, ge=0.0)
     run_outcomes: list[RunOutcome] = Field(..., max_length=10)
     blocked_count: int = Field(..., ge=0)

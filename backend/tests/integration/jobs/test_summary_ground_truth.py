@@ -179,16 +179,12 @@ async def test_dev_metrics_flow(
 
 
 AGENTS = """
-WITH reviews AS (SELECT * FROM runs WHERE kind = 'review' AND finished_at >= $1 AND finished_at < $2),
-triage AS (SELECT DISTINCT ON (task_id) task_id, in_scope FROM task_triage
-            WHERE created_at >= $1 AND created_at < $2 ORDER BY task_id, created_at DESC)
+WITH reviews AS (SELECT * FROM runs WHERE kind = 'review' AND finished_at >= $1 AND finished_at < $2)
 SELECT
   (SELECT count(*) FILTER (WHERE outcome = 'approved')::float / nullif(count(*), 0)
      FROM reviews WHERE round = 0) AS pass_rate,
   (SELECT avg(rounds) FROM (SELECT max(round) + 1 AS rounds FROM reviews GROUP BY task_id) t)
     AS rounds,
-  (SELECT count(*) FILTER (WHERE NOT in_scope)::float / nullif(count(*), 0) FROM triage)
-    AS out_of_scope,
   (SELECT max(extract(epoch FROM $3 - coalesce(
       (SELECT max(e.at) FROM task_events e WHERE e.task_id = t.id
          AND e.to_column = 'human_review' AND e.at <= $3), t.created_at)) / 3600)
@@ -214,7 +210,6 @@ async def test_dev_metrics_agents(
     truth = await _row(owner, AGENTS, *ARGS, NOW)
     assert _near(view.agent_pass_rate, truth["pass_rate"], 4)
     assert _near(view.avg_review_rounds, truth["rounds"], 4)
-    assert _near(view.out_of_scope_rate, truth["out_of_scope"], 4)
     oldest = None if truth["oldest"] is None else max(0.0, float(truth["oldest"]))
     assert _near(view.oldest_human_review_hours, oldest)
     outcomes = await _rows(
@@ -235,7 +230,7 @@ async def test_dev_metrics_for_an_empty_range(service: DashboardService, me: Pri
     assert view.lead_time_hours_p50 is None
     assert view.agent_pass_rate is None
     assert view.avg_review_rounds is None
-    assert view.out_of_scope_rate is None
+    assert not hasattr(view, "out_of_scope_rate")
     assert view.avg_cost_per_task_usd is None
     assert view.cycle_time_by_column == ()
 

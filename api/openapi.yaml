@@ -7496,7 +7496,6 @@ components:
         lead_time_hours_p90: {type: [number, 'null'], minimum: 0}
         agent_pass_rate: {type: [number, 'null'], minimum: 0, maximum: 1, description: Agent reviews passed first time.}
         avg_review_rounds: {type: [number, 'null'], minimum: 0}
-        out_of_scope_rate: {type: [number, 'null'], minimum: 0, maximum: 1, description: Share of triaged cards marked out of scope.}
         avg_cost_per_task_usd: {type: [number, 'null'], minimum: 0}
         run_outcomes:
           type: array

@@ -159,7 +159,7 @@ def test_dev_metrics_over_a_small_board() -> None:
     assert view.lead_time_hours_p90 == 48.0
     assert view.agent_pass_rate == 0.5
     assert view.avg_review_rounds == 1.5
-    assert view.out_of_scope_rate == 0.5
+    assert not hasattr(view, "out_of_scope_rate")
     assert view.avg_cost_per_task_usd == 2.0
     assert dict(view.run_outcomes) == {
         "succeeded": 3,
@@ -180,7 +180,7 @@ def test_dev_metrics_of_an_empty_board_is_nulls() -> None:
     assert view.lead_time_hours_p90 is None
     assert view.agent_pass_rate is None
     assert view.avg_review_rounds is None
-    assert view.out_of_scope_rate is None
+    assert not hasattr(view, "out_of_scope_rate")
     assert view.avg_cost_per_task_usd is None
     assert view.oldest_human_review_hours is None
     assert view.blocked_count == 0

@@ -109,6 +109,7 @@ async def test_dev_metrics_empty_and_populated(
     body = DevMetrics.model_validate(empty.json())
     assert body.lead_time_hours_p50 is None
     assert body.agent_pass_rate is None
+    assert "out_of_scope_rate" not in empty.json()
     assert {item.outcome.value for item in body.run_outcomes} == {
         "succeeded",
         "failed",
@@ -141,6 +142,7 @@ async def test_dev_metrics_empty_and_populated(
     assert metrics.lead_time_hours_p50 == 48.0
     assert metrics.agent_pass_rate == 1.0
     assert metrics.avg_cost_per_task_usd == 1.25
+    assert "out_of_scope_rate" not in response.json()
 
 
 async def test_health_is_maintainer_only(http: httpx.AsyncClient) -> None:

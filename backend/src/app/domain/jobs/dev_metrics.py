@@ -41,7 +41,6 @@ class DevMetricsView:
     lead_time_hours_p90: float | None
     agent_pass_rate: float | None
     avg_review_rounds: float | None
-    out_of_scope_rate: float | None
     avg_cost_per_task_usd: float | None
     run_outcomes: tuple[tuple[str, int], ...]
     blocked_count: int
@@ -91,19 +90,6 @@ def _review_stats(runs: Sequence[RunFact], window: DateRange) -> tuple[float | N
     return pass_rate, rounded(sum(rounds) / len(rounds), 4) if rounds else None
 
 
-def _out_of_scope_rate(facts: DevBoardFacts, window: DateRange) -> float | None:
-    latest: dict[uuid.UUID, tuple[datetime, bool]] = {}
-    for record in facts.triage:
-        if window.contains(record.at):
-            seen = latest.get(record.task_id)
-            if seen is None or record.at >= seen[0]:
-                latest[record.task_id] = (record.at, record.in_scope)
-    if not latest:
-        return None
-    out = sum(1 for _, in_scope in latest.values() if not in_scope)
-    return rounded(out / len(latest), 4)
-
-
 def _avg_cost(runs: Sequence[RunFact], task_ids: set[uuid.UUID]) -> float | None:
     if not task_ids:
         return None
@@ -151,7 +137,6 @@ def dev_metrics(facts: DevBoardFacts, window: DateRange, now: datetime) -> DevMe
         lead_time_hours_p90=rounded(percentile(leads, 0.9)),
         agent_pass_rate=pass_rate,
         avg_review_rounds=review_rounds,
-        out_of_scope_rate=_out_of_scope_rate(facts, window),
         avg_cost_per_task_usd=_avg_cost(facts.runs, set(first_done)),
         run_outcomes=_run_outcomes(facts.runs, window),
         blocked_count=columns["blocked"],
