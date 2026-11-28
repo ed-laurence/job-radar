@@ -21,7 +21,7 @@ from app.domain.devboard.model import (
 )
 from app.domain.devboard.proposals import split_body
 from app.domain.devboard.triage_policy import AREA_DEFAULT_PATHS
-from app.domain.ports.devboard import AgentResult, PlanDraft, RunContext, RunTools
+from app.domain.ports.devboard import AgentResult, PlanDraft, ReviewDraft, RunContext, RunTools
 
 type Sleep = Callable[[float], Awaitable[None]]
 
@@ -106,6 +106,8 @@ class SimulatedAgentRunner:
     async def run(self, context: RunContext, tools: RunTools) -> AgentResult:
         if context.run.kind is RunKind.PLAN:
             return await self._plan(context, tools)
+        if context.run.kind is RunKind.REVIEW:
+            return await self._review(tools)
         return await self._develop(context, tools)
 
     async def _say(self, tools: RunTools, step: NewStep) -> bool:
@@ -174,3 +176,18 @@ class SimulatedAgentRunner:
                 return AgentResult(is_success=False, outcome="Stopped.")
             await tools.renew_leases()
         return AgentResult(is_success=True, outcome="Bundle ready (simulated).", model="simulated")
+
+    async def _review(self, tools: RunTools) -> AgentResult:
+        """A clean review, so an offline card goes on to Human review."""
+        script = (
+            NewStep(StepKind.STATUS, "Reviewer started (read-only).", "reviewer"),
+            NewStep(StepKind.TOOL_CALL, "git diff base..HEAD", "reviewer", "bash"),
+            NewStep(StepKind.HANDOFF, "No findings.", "reviewer"),
+        )
+        for step in script:
+            if not await self._say(tools, step):
+                return AgentResult(is_success=False, outcome="Stopped.")
+        review = ReviewDraft(summary="Simulated review: no findings.", findings=())
+        return AgentResult(
+            is_success=True, outcome="Review done (simulated).", model="simulated", review=review
+        )

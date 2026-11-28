@@ -70,6 +70,19 @@ class VerificationStatus(StrEnum):
     DUPLICATE = "duplicate"
 
 
+class ReviewSeverity(StrEnum):
+    BLOCKER = "BLOCKER"
+    NIT = "NIT"
+
+
+class ReviewVerdict(StrEnum):
+    """`approved` -> human_review; `changes_requested` -> rework; `needs_decision` -> human."""
+
+    APPROVED = "approved"
+    CHANGES_REQUESTED = "changes_requested"
+    NEEDS_DECISION = "needs_decision"
+
+
 class Size(StrEnum):
     S = "S"
     M = "M"
@@ -204,6 +217,9 @@ class TaskRecord:
     blocked_from: Column | None = None
     pii_redacted: bool = False
     pr_url: str | None = None
+    branch: str | None = None
+    base_sha: str | None = None
+    review_round: int = 0
     active_run_id: uuid.UUID | None = None
 
 
@@ -224,6 +240,38 @@ class TaskEventRecord:
 class Criterion:
     test_id: str
     expectation: str
+
+
+@dataclass(frozen=True)
+class ReviewFinding:
+    """A reviewer finding after code's rules: an uncited BLOCKER is a NIT (`downgraded`)."""
+
+    severity: ReviewSeverity
+    path: str
+    evidence: str
+    rubric_id: str | None = None
+    test_id: str | None = None
+    repro: str | None = None
+    line: int | None = None
+    fix: str | None = None
+    downgraded: bool = False
+
+
+@dataclass(frozen=True)
+class ReviewRecord:
+    id: uuid.UUID
+    task_id: uuid.UUID
+    run_id: uuid.UUID
+    round: int
+    verdict: ReviewVerdict
+    summary: str
+    findings: tuple[ReviewFinding, ...]
+    created_at: datetime
+    model: str | None = None
+
+    @property
+    def blockers(self) -> tuple[ReviewFinding, ...]:
+        return tuple(f for f in self.findings if f.severity is ReviewSeverity.BLOCKER)
 
 
 @dataclass(frozen=True)

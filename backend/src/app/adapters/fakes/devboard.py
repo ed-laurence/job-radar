@@ -21,6 +21,7 @@ from app.domain.devboard.model import (
     LeaseRecord,
     NewStep,
     PlanRecord,
+    ReviewRecord,
     RunRecord,
     RunStatus,
     StepRecord,
@@ -62,6 +63,7 @@ class InMemoryTaskStore(_Scoped):
         self.events_log: list[TaskEventRecord] = []
         self.triages: list[TriageRecord] = []
         self.plans: list[PlanRecord] = []
+        self.reviews: list[ReviewRecord] = []
 
     async def insert(self, user_id: uuid.UUID, task: TaskRecord) -> None:
         self._scope(user_id)
@@ -155,6 +157,14 @@ class InMemoryTaskStore(_Scoped):
     async def latest_plan(self, user_id: uuid.UUID, task_id: uuid.UUID) -> PlanRecord | None:
         self._scope(user_id)
         return next((p for p in reversed(self.plans) if p.task_id == task_id), None)
+
+    async def add_review(self, user_id: uuid.UUID, review: ReviewRecord) -> None:
+        self._scope(user_id)
+        self.reviews.append(review)
+
+    async def latest_review(self, user_id: uuid.UUID, task_id: uuid.UUID) -> ReviewRecord | None:
+        self._scope(user_id)
+        return next((r for r in reversed(self.reviews) if r.task_id == task_id), None)
 
     async def save_plan(
         self, user_id: uuid.UUID, plan: PlanRecord, expected_version: int

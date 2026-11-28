@@ -1,5 +1,5 @@
-"""A `Workflow` on in-memory fakes with a scripted triage agent, a scripted plan runner and a
-fixed repo listing, for routing and repo path tests (no LLM, no replay)."""
+"""A `Workflow` on in-memory fakes with a scripted triage agent, a scripted runner (plans, dev
+runs that publish a branch, scripted reviews) and a fixed repo listing (no LLM, no replay)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from app.adapters.fakes.devboard import (
     InMemoryTaskStore,
     InProcessDispatcher,
 )
+from app.adapters.fakes.devboard_reviews import FakeBranchViews, FixedRubricIds
 from app.adapters.fakes.security import FakePII
 from app.adapters.fakes.system import FakeClock, SequentialIds
 from app.domain.devboard.board import BoardService
@@ -21,9 +22,12 @@ from app.domain.devboard.model import (
     Actor,
     ActorKind,
     Area,
+    Column,
     Criterion,
     NewStep,
     Priority,
+    ReviewFinding,
+    ReviewSeverity,
     Risk,
     Route,
     RunKind,
@@ -38,13 +42,16 @@ from app.domain.devboard.model import (
     VerificationStatus,
 )
 from app.domain.devboard.plans import PlanService
+from app.domain.devboard.review_flow import ReviewInputs
 from app.domain.devboard.runs import RunService
 from app.domain.devboard.workflow import Agents, Stores, Workflow
 from app.domain.identity import AppRole
 from app.domain.ports.devboard import (
     AgentResult,
     AgentRunner,
+    BranchDiff,
     PlanDraft,
+    ReviewDraft,
     RunContext,
     RunTools,
     TriageDecision,
@@ -125,19 +132,77 @@ class ScriptedTriage:
         return self.answers.get(context.task.title, decision())
 
 
+BASE_SHA = "a" * 40
+CHANGED = "web/src/features/devboard/Board.tsx"
+RUBRIC = frozenset({"ARCH-03", "TEST-01"})
+PATCH = "From 0000 Mon Sep 17 00:00:00 2001\nSubject: [PATCH] Fix the board\n"
+
+
+def branch_name(run: RunRecord) -> str:
+    return f"agent/{str(run.task_id)[:8]}-{str(run.id)[:8]}"
+
+
+def unified_diff(*paths: str) -> str:
+    lines = ("diff --git a/{0} b/{0}", "--- a/{0}", "+++ b/{0}", "@@ -1 +1 @@", "-old", "+new")
+    return "".join("".join(line.format(path) + "\n" for line in lines) for path in paths)
+
+
 @dataclass
 class ScriptedRunner:
+    """Plans; dev runs publish a branch (to `branches`, changing `CHANGED`); review runs answer
+    from `reviews` in order (default: a clean review). Keeps every context it saw."""
+
     plan: PlanDraft = field(default_factory=draft)
     runs: list[RunKind] = field(default_factory=list[RunKind])
+    reviews: list[AgentResult] = field(default_factory=list[AgentResult])
+    seen: list[RunContext] = field(default_factory=list[RunContext])
+    branches: FakeBranchViews = field(default_factory=FakeBranchViews)
 
     async def run(self, context: RunContext, tools: RunTools) -> AgentResult:
         self.runs.append(context.run.kind)
-        await tools.emit(NewStep(StepKind.STATUS, "Scripted plan.", "dev-lead"))
+        self.seen.append(context)
+        await tools.emit(NewStep(StepKind.STATUS, "Scripted run.", "dev-lead"))
+        if context.run.kind is RunKind.REVIEW:
+            return self.reviews.pop(0) if self.reviews else reviewed()
+        if context.run.kind is RunKind.DEV:
+            branch = branch_name(context.run)
+            text = unified_diff(CHANGED)
+            self.branches.publish(BranchDiff(branch, BASE_SHA, 1, 1, 1, text), PATCH)
+            return AgentResult(
+                is_success=True,
+                outcome="Bundle ready.",
+                cost_usd=1.0,
+                branch=branch,
+                base_sha=BASE_SHA,
+            )
         return AgentResult(is_success=True, outcome="Plan ready.", plan=self.plan, cost_usd=0.5)
 
 
+def reviewed(*findings: ReviewFinding, cost_usd: float = 0.75) -> AgentResult:
+    return AgentResult(
+        is_success=True,
+        outcome="Reviewed.",
+        cost_usd=cost_usd,
+        model="claude-opus",
+        review=ReviewDraft(summary="Looked at the change.", findings=findings),
+    )
+
+
+def blocker(**changes: object) -> ReviewFinding:
+    base = ReviewFinding(
+        ReviewSeverity.BLOCKER, path=CHANGED, evidence="Route holds a rule.", rubric_id="ARCH-03"
+    )
+    return replace(base, **changes)
+
+
 class Harness:
-    def __init__(self, files: frozenset[str] = FILES, runner: AgentRunner | None = None) -> None:
+    def __init__(
+        self,
+        files: frozenset[str] = FILES,
+        runner: AgentRunner | None = None,
+        *,
+        rubric: frozenset[str] = RUBRIC,
+    ) -> None:
         clock, ids = FakeClock(), SequentialIds()
         self.runs = InMemoryRunStore(ids)
         self.tasks = InMemoryTaskStore(self.runs)
@@ -157,6 +222,7 @@ class Harness:
             self.dispatcher,
             (clock, ids),
             repo_files=self.files,
+            review=ReviewInputs(self.runner.branches, FixedRubricIds(rubric)),
         )
         self.board.attach(self.workflow)
 
@@ -164,6 +230,21 @@ class Harness:
         task = await self.board.create(actor, title, "", ())
         await self.dispatcher.drain()
         return await self.board.get(MAINTAINER, task.id)
+
+    async def start_dev(self, title: str = "Fix the board") -> TaskRecord:
+        """A card dropped into `agent_dev` (plan approval is not the point here)."""
+        task = await self.create(title)
+        dev = await self.tasks.save(
+            MAINTAINER.user_id, replace(task, column=Column.AGENT_DEV), task.version
+        )
+        await self.workflow.on_moved(MAINTAINER, dev, Column.READY)
+        await self.dispatcher.drain()
+        return await self.board.get(MAINTAINER, task.id)
+
+    async def kinds(self, task: TaskRecord) -> list[RunKind]:
+        """Run kinds, oldest first."""
+        runs = await self.runs.for_task(MAINTAINER.user_id, task.id, 0, 50)
+        return [run.kind for run in reversed(runs)]
 
     async def latest_run(self, task: TaskRecord, kind: RunKind) -> RunRecord:
         runs = await self.runs.for_task(MAINTAINER.user_id, task.id, 0, 20)

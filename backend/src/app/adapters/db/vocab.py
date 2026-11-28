@@ -110,6 +110,7 @@ TASK_EVENT_KIND = (
 )
 ACTOR_KIND = ("maintainer", "user", "agent", "system")
 RUN_KIND = ("triage", "plan", "test_writer", "dev", "publish", "review")
+REVIEW_VERDICT = ("approved", "changes_requested", "needs_decision")
 PLAN_MODE = ("single", "multi")
 LEASE_KIND = ("exclusive", "hotspot")
 

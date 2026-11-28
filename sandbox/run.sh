@@ -9,8 +9,9 @@
 # Env passed through by NAME only (values never on the command line or in logs):
 #   ANTHROPIC_AUTH_TOKEN   per-task llm-proxy token (python -m llm_proxy.mint)
 #   COORDINATOR_TOKEN      per-task coordinator token (jrc1)
-#   RUN_ID, AGENT_MODE (agent|plan|triage|stub), AGENT_MODEL, AGENT_MAX_TURNS, AGENT_TOKEN_BUDGET,
-#   AGENT_TIMEOUT_S, TASK_BASE_REF, SANDBOX_SUITES, SANDBOX_POSTGRES
+#   RUN_ID, AGENT_MODE (agent|plan|triage|review|stub), AGENT_MODEL, AGENT_MAX_TURNS,
+#   AGENT_TOKEN_BUDGET, AGENT_TIMEOUT_S, AGENT_BASE_SHA, TASK_BASE_REF, SANDBOX_SUITES,
+#   SANDBOX_POSTGRES
 # COORDINATOR_URL (HTTP API base) comes from AGENT_COORDINATOR_URL (default http://coordinator:8100),
 # ANTHROPIC_BASE_URL from AGENT_LLM_BASE_URL (http://llm-proxy:8080); both are reached directly on the internal network.
 set -euo pipefail
@@ -30,7 +31,7 @@ while [[ $# -gt 0 ]]; do
     --entrypoint) ENTRY=(--entrypoint "${2:?}"); shift ;;
     --arg) ARGS+=("${2?}"); shift ;;
     --) shift; EXTRA=("$@"); break ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -52,7 +53,7 @@ env_args=(-e TASK_ID="$TASK_ID"
   -e no_proxy="localhost,127.0.0.1,llm-proxy,coordinator"
   -e ANTHROPIC_BASE_URL="$LLM_URL" -e COORDINATOR_URL="$COORD_URL")
 for name in ANTHROPIC_AUTH_TOKEN COORDINATOR_TOKEN RUN_ID AGENT_MODE AGENT_MODEL AGENT_MAX_TURNS \
-  AGENT_TOKEN_BUDGET AGENT_TIMEOUT_S TASK_BASE_REF SANDBOX_SUITES SANDBOX_POSTGRES; do
+  AGENT_TOKEN_BUDGET AGENT_TIMEOUT_S AGENT_BASE_SHA TASK_BASE_REF SANDBOX_SUITES SANDBOX_POSTGRES; do
   if [[ -n "${!name:-}" ]]; then env_args+=(-e "$name"); fi
 done
 

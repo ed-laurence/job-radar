@@ -49,7 +49,8 @@ jobs:
           [[ "$tests" =~ ^[0-9]{1,5}/[0-9]{1,5}$ ]] || tests="unknown"
           [[ "$lines" =~ ^[0-9]{1,5}$ ]] || lines="unknown"
           card="(card link unavailable)"
-          [[ "$APP_BASE_URL" =~ ^https://[A-Za-z0-9.-]+$ ]] && card="$APP_BASE_URL/board/tasks/$task"
+          # The card page is /dev-board/<task uuid> (the trailer is task-<uuid>).
+          [[ "$APP_BASE_URL" =~ ^https://[A-Za-z0-9.-]+$ ]] && card="$APP_BASE_URL/dev-board/${task#task-}"
           {
             echo "title=agent: $task"
             echo "body<<JR_EOF"

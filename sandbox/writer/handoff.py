@@ -17,6 +17,10 @@ else ``failed`` with the runner's ``detail``.
 
 ``--triage-mode --triage-json /out/triage.json`` (AGENT_MODE=triage): the same, against the
 triage contract (``triage_contract``); the summary is built from its enums and counts only.
+
+``--review-mode --review-json /out/review.json --changed-files F`` (AGENT_MODE=review): the
+same, against the review contract (``review_contract``, every path one of the changed files);
+the summary is built from the finding counts only.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from pathlib import Path
 from typing import cast
 
 import plan_contract
+import review_contract
 import triage_contract
 
 MAX_SUMMARY_WORDS = 80
@@ -253,6 +258,37 @@ def build_triage(
     return build(task_id, Counts(), [], skips, status, summary, None)
 
 
+def read_review(task_id: str, path: Path, changed: frozenset[str]) -> dict[str, object] | None:
+    """The review run's ``/out/review.json`` if it exists and meets the contract, else None."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return review_contract.validate(raw, task_id, changed)
+    except (OSError, ValueError, review_contract.ReviewError):
+        return None
+
+
+def build_review(
+    task_id: str,
+    review_path: Path,
+    changed: frozenset[str],
+    agent: AgentOutcome,
+    skipped: list[str],
+) -> dict[str, object]:
+    """A review run's handoff: ``done`` exactly when a valid review.json was written."""
+    review = read_review(task_id, review_path, changed)
+    if review is None:
+        status = "failed"
+        lead = agent.detail or f"Review run for task {task_id} stopped ({agent.stop})"
+        summary = f"{lead} No valid review was written."
+    else:
+        status = "done"
+        summary = (
+            f"Review for task {task_id}: {review_contract.summary(review)}. {agent.detail or ''}"
+        )
+    skips = ["review run: no tests run", *skipped]
+    return build(task_id, Counts(), [], skips, status, summary, None)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="handoff")
     parser.add_argument("--task-id", required=True)
@@ -272,7 +308,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--plan-json", type=Path, help="plan mode: the plan run's plan.json")
     parser.add_argument("--triage-mode", action="store_true", help="a triage run (no diff)")
     parser.add_argument("--triage-json", type=Path, help="triage mode: the run's triage.json")
+    parser.add_argument("--review-mode", action="store_true", help="a review run (no diff)")
+    parser.add_argument("--review-json", type=Path, help="review mode: the run's review.json")
+    parser.add_argument(
+        "--changed-files", type=Path, help="review mode: git diff --name-only -z base..HEAD"
+    )
     args = parser.parse_args(argv)
+
+    if args.review_mode:
+        if args.review_json is None or args.changed_files is None:
+            parser.error("--review-mode needs --review-json and --changed-files")
+        agent = read_agent_result(args.agent_result)
+        changed = review_contract.read_changed(args.changed_files)
+        review = build_review(args.task_id, args.review_json, changed, agent, args.skipped)
+        _write(args.out, review)
+        return 0
 
     if args.triage_mode:
         if args.triage_json is None:

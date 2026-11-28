@@ -7,6 +7,7 @@ the container's shared LISTEN hub (ARCH-31), or an in-memory hub offline.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
@@ -22,7 +23,8 @@ from app.adapters.agents.docker_triage import DockerTriageAgent
 from app.adapters.agents.process import AsyncioProcessRunner
 from app.adapters.agents.tokens import CoordinatorTokenMint
 from app.adapters.agents.usage import DockerUsageProbe
-from app.adapters.codehost.local_git import LocalGitHost
+from app.adapters.codehost.github import GitHubAccess, GitHubHost, github_url
+from app.adapters.codehost.local_git import LocalBranchViews, LocalGitHost
 from app.adapters.codehost.working_tree import ListedRepoFiles, WorkingTreeFiles
 from app.adapters.db.devboard_leases import PgLeaseStore
 from app.adapters.db.devboard_runs import PgRunStore
@@ -36,6 +38,8 @@ from app.adapters.fakes.devboard import (
     InProcessDispatcher,
 )
 from app.adapters.fakes.task_chat import MemoryTaskChats
+from app.adapters.github.pull_requests import GhPullRequests
+from app.adapters.standards import RUBRIC_FILE, StandardsRubricIds
 from app.agents.task_chat.agent import TaskChatLlmAgent
 from app.agents.triage.agent import TriageLlmAgent
 from app.api.devboard import chat as chat_routes
@@ -54,6 +58,9 @@ from app.domain.devboard.model import (
     StepRecord,
 )
 from app.domain.devboard.plans import PlanService
+from app.domain.devboard.pr_sync import PrSyncService
+from app.domain.devboard.review_flow import ReviewInputs
+from app.domain.devboard.reviews import ReviewService
 from app.domain.devboard.runs import RunService
 from app.domain.devboard.schedule import JobName, JobReport, JobRunLog
 from app.domain.devboard.simulation import SimulatedAgentRunner
@@ -69,11 +76,11 @@ from app.domain.ports.devboard import (
     RunFinish,
     RunStore,
     TaskStore,
-    TextRedactor,
     TriageAgent,
 )
 from app.domain.ports.task_chat import TaskChatStore
 from app.guards.redaction import Redactor
+from app.jobs.pr_sync import run_pr_sync
 from app.settings import REPO_ROOT
 
 if TYPE_CHECKING:
@@ -131,11 +138,26 @@ def devboard_llm(container: Container) -> LLM:
     return container.llm
 
 
+def code_host(container: Container) -> LocalGitHost:
+    """The scratch remote agent branches are published to (no disk is touched until used).
+    With CODE_HOST=github it also snapshots GitHub `main` and pushes clean dev runs to
+    `agent/task-<id>` with the deploy key (docs/features/github-prs.md)."""
+    s = container.settings
+    if s.code_host == "github" and s.github_repo:
+        access = GitHubAccess(
+            url=github_url(s.github_repo),
+            deploy_key=s.github_deploy_key_path.expanduser(),
+            known_hosts=s.github_known_hosts_path.expanduser(),
+        )
+        return GitHubHost(REPO_ROOT, s.agent_remote_path, access)
+    return LocalGitHost(REPO_ROOT, s.agent_remote_path)
+
+
 def agent_runner(
     container: Container,
     sleep: Sleep,
     step_delay: float,
-    redactor: TextRedactor | None = None,
+    redactor: Redactor | None = None,
 ) -> AgentRunner:
     """The simulation, or (AGENT_SANDBOX=docker, local only) the Docker writer sandbox with
     LocalGitHost. Under docker, plan runs go to the sandboxed dev-lead unless
@@ -157,15 +179,22 @@ def agent_runner(
         triage_budget_usd=settings.agent_triage_budget_usd,
         triage_timeout_s=settings.agent_triage_timeout_s,
         triage_model=settings.agent_triage_model,
+        review_budget_usd=settings.agent_review_budget_usd,
+        review_timeout_s=settings.agent_review_timeout_s,
+        review_model=settings.agent_review_model,
         artifacts_root=AGENT_ARTIFACTS,
     )
+    host = code_host(container)
     deps = SandboxDeps(
-        host=LocalGitHost(REPO_ROOT, settings.agent_remote_path),
+        host=host,
+        pusher=host if isinstance(host, GitHubHost) else None,
         processes=AsyncioProcessRunner(),
         coordinator_tokens=CoordinatorTokenMint(coordinator_key.get_secret_value().encode()),
         planner=simulated if settings.agent_planner == "simulation" else None,
         usage=DockerUsageProbe(config),
         redactor=redactor,
+        # PUB-SECRET: added lines that the redaction filter would change fail the Publisher.
+        secret_filter=redactor,
     )
     return DockerAgentRunner(config, deps, proxy_secret.get_secret_value().encode())
 
@@ -251,6 +280,8 @@ def build(container: Container, *, sleep: Sleep = asyncio.sleep) -> DevboardRunt
     leases = LeaseService(stores.leases, clock)
     dispatcher = InProcessDispatcher()
     files = repo_files(container)
+    branches = LocalBranchViews(code_host(container))
+    rubric = StandardsRubricIds(REPO_ROOT / RUBRIC_FILE)
     agents = Agents(triage=triage_agent(container, runner, files), runner=runner)
     workflow = Workflow(
         Stores(tasks=stores.tasks, runs=stores.runs),
@@ -259,6 +290,7 @@ def build(container: Container, *, sleep: Sleep = asyncio.sleep) -> DevboardRunt
         dispatcher,
         (clock, ids),
         repo_files=files,
+        review=ReviewInputs(branches, rubric),
     )
     board.attach(workflow)
     chats = task_chat_store(container)
@@ -277,14 +309,47 @@ def build(container: Container, *, sleep: Sleep = asyncio.sleep) -> DevboardRunt
         redactor=redactor,
         chat=chat,
         proposals=ProposalDecisions((board, plans, workflow), chats, (clock, ids)),
+        reviews=ReviewService(stores.tasks, branches, redactor),
     )
     return DevboardRuntime(services=services, stores=stores, leases=leases, dispatcher=dispatcher)
+
+
+class PrSyncTask:
+    """Local only: polls GitHub (gh, read-only) for agent PRs; started and stopped by the app
+    lifespan when CODE_HOST=github and PR_SYNC_INTERVAL_S > 0."""
+
+    def __init__(self, service: PrSyncService, interval_s: int, actor: Actor) -> None:
+        self._service, self._interval_s, self._actor = service, interval_s, actor
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        self._task = asyncio.create_task(
+            run_pr_sync(self._service, self._interval_s, actor=self._actor), name="pr-sync"
+        )
+
+    async def stop(self) -> None:
+        if self._task is None:
+            return
+        self._task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._task
+
+
+def pr_sync_task(container: Container, runtime: DevboardRuntime) -> PrSyncTask | None:
+    s = container.settings
+    if s.code_host != "github" or not s.github_repo or s.pr_sync_interval_s <= 0:
+        return None
+    service = PrSyncService(
+        runtime.stores.tasks, runtime.services.board, GhPullRequests(s.github_repo)
+    )
+    return PrSyncTask(service, s.pr_sync_interval_s, job_actor(container))
 
 
 def install(app: FastAPI, container: Container) -> None:
     runtime = build(container)
     app.state.devboard = runtime.services
     app.state.devboard_runtime = runtime
+    app.state.pr_sync = pr_sync_task(container, runtime)
     app.include_router(task_routes.router)
     app.include_router(run_routes.router)
     app.include_router(chat_routes.router)

@@ -38,7 +38,7 @@ def test_every_board_operation_is_served(container: Container) -> None:
         for method, operation in item.items()
     }
     expected = _spec_operations(container.settings)
-    assert len(expected) == 16
+    assert len(expected) == 19
     for operation_id, (method, path, _) in expected.items():
         assert routes.get(operation_id) == (method, path), operation_id
 

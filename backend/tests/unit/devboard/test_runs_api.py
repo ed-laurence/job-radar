@@ -112,15 +112,17 @@ async def _ready(ui: Board) -> dict[str, object]:
     return response.json()
 
 
-async def test_dev_run_streams_steps_and_lands_in_agent_review(ui: Board) -> None:
+async def test_dev_run_streams_steps_then_agent_review_lands_in_human_review(ui: Board) -> None:
     task = await _ready(ui)
     assert (await ui.move(task, "agent_dev", headers=AS_USER)).status_code == 403
     assert (await ui.move(task, "agent_dev")).status_code == 200
     moved = await ui.task(str(task["id"]))
-    assert moved["column"] == "agent_review"
+    assert moved["column"] == "human_review"
+    assert moved["review_round"] == 1
     runs = (await ui.http.get(f"/api/tasks/{task['id']}/runs", headers=AS_USER)).json()["items"]
-    assert [run["kind"] for run in runs] == ["dev", "plan", "triage"]
-    dev = runs[0]
+    assert [run["kind"] for run in runs] == ["review", "dev", "plan", "triage"]
+    assert runs[0]["status"] == "succeeded"
+    dev = runs[1]
     assert dev["status"] == "succeeded"
     single = (await ui.http.get(f"/api/runs/{dev['id']}", headers=AS_USER)).json()
     assert single["id"] == dev["id"]

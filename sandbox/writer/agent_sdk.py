@@ -22,6 +22,7 @@ import agent_runner
 import coordinator_client
 import coordinator_tools
 import llm_usage
+import review_contract
 import run_log
 from claude_agent_sdk import (
     AssistantMessage,
@@ -95,8 +96,22 @@ async def run_agent(
         if settings.is_triage and settings.triage_out is not None
         else None
     )
+    review_sink = (
+        coordinator_tools.ReviewSink(
+            settings.task_id,
+            settings.review_out,
+            review_contract.read_changed(settings.changed_files),
+        )
+        if settings.is_review and settings.review_out and settings.changed_files
+        else None
+    )
     tools = coordinator_tools.CoordinatorTools(
-        client, tracker, on_step=log.step, plan_sink=sink, triage_sink=triage_sink
+        client,
+        tracker,
+        on_step=log.step,
+        plan_sink=sink,
+        triage_sink=triage_sink,
+        review_sink=review_sink,
     )
 
     async def pre_tool_use(

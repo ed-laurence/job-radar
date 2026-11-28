@@ -11,6 +11,11 @@ Plan runs (``plan_sink`` given) get ``PLAN_SPECS`` only: get_task, post_step, re
 (``plan_contract``) and the read-only checkout, then writes the file. It never reaches the
 coordinator; an invalid plan comes back as a tool error listing what to fix.
 
+Review runs (``review_sink`` given) get ``REVIEW_SPECS``: the same read-only tools plus
+``submit_review``, which validates against the ``/out/review.json`` contract
+(``review_contract``: strict keys, at most 10 findings, word caps, every path a file the branch
+changed) and writes the file.
+
 Triage runs (``triage_sink`` given) get ``TRIAGE_SPECS``: the same read-only tools plus
 ``submit_triage``, which validates against the ``/out/triage.json`` contract
 (``triage_contract``), the checkout and the open cards get_task listed, then writes the file.
@@ -27,6 +32,7 @@ from pathlib import Path
 import agent_policy
 import coordinator_client as cc
 import plan_contract
+import review_contract
 import triage_contract
 
 MAX_CLAIM_PATHS = 50
@@ -172,6 +178,31 @@ TRIAGE_SPECS = tuple(
 )
 
 
+SUBMIT_REVIEW = ToolSpec(
+    "submit_review",
+    "Submit the finished review (validated, then written to /out/review.json; then stop). "
+    "review = {summary <=80 words, findings: [{severity: BLOCKER|NIT, rubric_id: id from "
+    "docs/standards/review-rubric.yaml | null, test_id: '<test file>::<test name>' | null, "
+    "repro <=60 words | null, path: a file this branch changed, line: int | null, "
+    "evidence <=60 words, fix <=60 words | null}] (<=10)}. A BLOCKER needs a rubric_id, a "
+    "test_id or a repro. No other keys. A refusal lists what to fix.",
+    _schema({"review": {"type": "object"}}, ["review"]),
+)
+REVIEW_SPECS = tuple(
+    SUBMIT_REVIEW if name == "submit_review" else _BY_NAME[name]
+    for name in agent_policy.REVIEW_COORDINATOR_TOOLS
+)
+
+
+@dataclass(frozen=True)
+class ReviewSink:
+    """Where a review run's review goes, and the files the branch changed."""
+
+    task_id: str
+    out: Path
+    changed_files: frozenset[str]
+
+
 @dataclass(frozen=True)
 class TriageSink:
     """Where a triage run's answer goes, and the open cards a duplicate may name."""
@@ -233,6 +264,7 @@ class CoordinatorTools:
         on_step: Callable[[str, str], None] | None = None,
         plan_sink: PlanSink | None = None,
         triage_sink: TriageSink | None = None,
+        review_sink: ReviewSink | None = None,
     ) -> None:
         """``on_step(kind, text)`` runs after each step the coordinator accepted. With
         ``plan_sink`` the tools are the plan run's (``PLAN_SPECS``), with ``triage_sink`` the
@@ -240,9 +272,12 @@ class CoordinatorTools:
         self._client, self._tracker, self._on_step = client, tracker, on_step
         self._plan_sink = plan_sink
         self._triage_sink = triage_sink
+        self._review_sink = review_sink
 
     @property
     def specs(self) -> tuple[ToolSpec, ...]:
+        if self._review_sink is not None:
+            return REVIEW_SPECS
         if self._triage_sink is not None:
             return TRIAGE_SPECS
         return SPECS if self._plan_sink is None else PLAN_SPECS
@@ -274,6 +309,7 @@ class CoordinatorTools:
             "request_help": self._help,
             "submit_plan": self._submit_plan,
             "submit_triage": self._submit_triage,
+            "submit_review": self._submit_review,
         }
         names = {spec.name for spec in self.specs}
         return {name: fn for name, fn in handlers.items() if name in names}
@@ -365,4 +401,23 @@ class CoordinatorTools:
             "accepted": True,
             "summary": triage_contract.summary(triage),
             "next": "The triage is written. Stop now.",
+        }
+
+    async def _submit_review(self, args: Mapping[str, object]) -> dict[str, object]:
+        sink = self._review_sink
+        if sink is None:  # unreachable: only review runs expose submit_review
+            raise ToolInputError("submit_review is only available in review runs")
+        if "review" not in args:
+            raise ToolInputError("review is required")
+        try:
+            review = review_contract.validate(args.get("review"), sink.task_id, sink.changed_files)
+        except review_contract.ReviewError as exc:
+            problems = "; ".join(exc.errors)
+            raise ToolInputError(f"{problems}. Fix these and call submit_review again.") from None
+        await asyncio.to_thread(review_contract.write, review, sink.out)
+        self._tracker.review_submitted = True
+        return {
+            "accepted": True,
+            "summary": review_contract.summary(review),
+            "next": "The review is written. Stop now.",
         }

@@ -6,6 +6,7 @@ Cloud Run exposes Secret Manager secrets. Nothing here is ever logged.
 
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 from typing import Literal, Self
@@ -28,6 +29,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # A throwaway default for local runs; the prod validator rejects it.
 _LOCAL_SALT = "local-only-salt"
 _MIN_AGENT_KEY = 32
+_GITHUB_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_JOBRADAR_CONFIG = Path.home() / ".config" / "jobradar"
 
 
 class _UserRecord(BaseModel):
@@ -138,10 +141,43 @@ class Settings(BaseSettings):
     agent_triage_budget_usd: float = Field(default=0.5, gt=0, le=20)
     agent_triage_timeout_s: int = Field(default=300, ge=60, le=7200)
     agent_triage_model: str = Field(default="claude-sonnet-5-5", min_length=1, max_length=100)
+    # Review runs under AGENT_SANDBOX=docker (the read-only reviewer on a published branch):
+    # llm-proxy budget, wall clock and model (docs/features/agent-review.md §2).
+    agent_review_budget_usd: float = Field(default=1.0, gt=0, le=20)
+    agent_review_timeout_s: int = Field(default=600, ge=60, le=7200)
+    agent_review_model: str = Field(default="claude-sonnet-5-5", min_length=1, max_length=100)
     # HMAC key for per-task llm-proxy tokens (shared with llm-proxy only), and the key the
     # coordinator signs task-scoped sandbox tokens with.
     llm_proxy_secret: SecretStr | None = None
     coordinator_token_key: SecretStr | None = None
+    # Where checked agent branches go (docs/features/github-prs.md): `local` keeps them in the
+    # scratch remote; `github` snapshots GitHub `main` and pushes to `agent/task-<uuid>` with a
+    # deploy key (only paths here; the key's content is never read or logged by settings).
+    code_host: Literal["local", "github"] = "local"
+    github_repo: str | None = Field(default=None, max_length=200)
+    github_deploy_key_path: Path = _JOBRADAR_CONFIG / "github_deploy_key"
+    github_known_hosts_path: Path = _JOBRADAR_CONFIG / "github_known_hosts"
+    # The local PR-sync poll; 0 turns it off.
+    pr_sync_interval_s: int = Field(default=60, ge=0, le=86_400)
+
+    @model_validator(mode="after")
+    def _github_is_complete(self) -> Self:
+        if self.code_host != "github":
+            return self
+        if self.environment == "prod":
+            raise ValueError("CODE_HOST must be local in prod (GitHubHost is local-only)")
+        repo = self.github_repo or ""
+        parts = repo.split("/")
+        if not _GITHUB_REPO.match(repo) or any(part in {".", ".."} for part in parts):
+            raise ValueError("CODE_HOST=github needs GITHUB_REPO as owner/name")
+        for name, path in (
+            ("GITHUB_DEPLOY_KEY_PATH", self.github_deploy_key_path),
+            ("GITHUB_KNOWN_HOSTS_PATH", self.github_known_hosts_path),
+        ):
+            resolved = path.expanduser().resolve()
+            if resolved == REPO_ROOT or REPO_ROOT in resolved.parents:
+                raise ValueError(f"{name} must be outside the project folder")
+        return self
 
     @model_validator(mode="after")
     def _agent_sandbox_is_complete(self) -> Self:

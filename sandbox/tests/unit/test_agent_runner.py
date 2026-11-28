@@ -22,7 +22,8 @@ ARGV = ["--base-dir", "/sandbox/agent/base", "--out", "/sandbox/agent/result.jso
 
 def test_settings_defaults_and_bounds() -> None:
     s = ar.load_settings(ENV, ARGV)
-    assert (s.model, s.max_turns, s.token_budget) == ("claude-opus-5-5", 60, 3_000_000)
+    # The writer runs on Sonnet (the human's choice); plans stay on Opus.
+    assert (s.model, s.max_turns, s.token_budget) == ("claude-sonnet-5-5", 60, 3_000_000)
     s = ar.load_settings({**ENV, "AGENT_MAX_TURNS": "12", "AGENT_TOKEN_BUDGET": "50000"}, ARGV)
     assert (s.max_turns, s.token_budget) == (12, 50_000)
     for bad in ({"AGENT_MAX_TURNS": "0"}, {"AGENT_MAX_TURNS": "x"}, {"AGENT_TOKEN_BUDGET": "1"}):
@@ -49,7 +50,7 @@ def test_options_no_web_no_repo_settings_no_coordinator_config() -> None:
     assert "mcp_servers" not in opts
     assert opts["strict_mcp_config"] is True
     assert opts["setting_sources"] == []
-    assert opts["model"] == "claude-opus-5-5" and opts["max_turns"] == 60
+    assert opts["model"] == "claude-sonnet-5-5" and opts["max_turns"] == 60
     assert opts["system_prompt"] == "SYSTEM"
     assert opts["cwd"] == ap.WORKSPACE
     text = json.dumps(opts)

@@ -6,6 +6,8 @@ from app.domain.devboard.model import (
     COLUMN_ORDER,
     Actor,
     PlanRecord,
+    ReviewFinding,
+    ReviewRecord,
     RunRecord,
     StepRecord,
     TaskEventRecord,
@@ -13,6 +15,7 @@ from app.domain.devboard.model import (
     TriageRecord,
     Verification,
 )
+from app.domain.devboard.reviews import DiffView
 from app.domain.devboard.state_machine import user_targets
 from app.generated.models import (
     AcceptanceCriterion,
@@ -20,7 +23,9 @@ from app.generated.models import (
     Run,
     Step,
     Task,
+    TaskDiff,
     TaskEvent,
+    TaskReview,
     TriageResult,
 )
 
@@ -59,6 +64,9 @@ def task(record: TaskRecord, viewer: Actor) -> Task:
             "pii_redacted": record.pii_redacted,
             "active_run_id": record.active_run_id,
             "pr_url": record.pr_url,
+            "branch": record.branch,
+            "base_sha": record.base_sha,
+            "review_round": record.review_round,
             "created_by_role": record.created_by_role.value if record.created_by_role else None,
             "created_at": record.created_at,
             "updated_at": record.updated_at,
@@ -182,4 +190,46 @@ def step(record: StepRecord, summary: str) -> Step:
             "summary": summary,
             "at": record.at,
         }
+    )
+
+
+def review(record: ReviewRecord) -> TaskReview:
+    return TaskReview.model_validate(
+        {
+            "task_id": record.task_id,
+            "run_id": record.run_id,
+            "round": record.round,
+            "verdict": record.verdict.value,
+            "summary": record.summary,
+            "findings": [_finding(finding) for finding in record.findings],
+            "model": record.model,
+            "created_at": record.created_at,
+        }
+    )
+
+
+def _finding(record: ReviewFinding) -> dict[str, object]:
+    return {
+        "severity": record.severity.value,
+        "rubric_id": record.rubric_id,
+        "test_id": record.test_id,
+        "repro": record.repro,
+        "path": record.path,
+        "line": record.line,
+        "evidence": record.evidence,
+        "fix": record.fix,
+        "downgraded": record.downgraded or None,
+    }
+
+
+def diff(view: DiffView) -> TaskDiff:
+    found = view.diff
+    return TaskDiff(
+        branch=found.branch,
+        base_sha=found.base_sha,
+        files_changed=found.files_changed,
+        insertions=found.insertions,
+        deletions=found.deletions,
+        diff=found.text,
+        truncated=view.truncated,
     )

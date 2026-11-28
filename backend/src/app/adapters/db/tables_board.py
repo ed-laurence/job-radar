@@ -71,6 +71,10 @@ class DevTask(Base):
     out_of_scope_reason: Mapped[str | None]
     pii_redacted: Mapped[bool] = mapped_column(server_default=text("false"))
     pr_url: Mapped[str | None]
+    # The latest published agent branch and its base (LocalGitHost / GitHubHost).
+    branch: Mapped[str | None]
+    base_sha: Mapped[str | None]
+    review_round: Mapped[int] = mapped_column(server_default=text("0"))
     created_by: Mapped[uuid.UUID] = ref("users.id", ondelete="RESTRICT")
     deleted_at: Mapped[datetime | None] = stamp()
     version: Mapped[int] = version()
@@ -169,12 +173,33 @@ class TaskPlan(Base):
     updated_at: Mapped[datetime] = updated()
 
 
+class TaskReview(Base):
+    """One agent review of a card's branch (docs/features/agent-review.md)."""
+
+    __tablename__ = "task_reviews"
+    __table_args__ = (
+        one_of("verdict", vocab.REVIEW_VERDICT),
+        Index("ix_task_reviews_task_created", "task_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = pk()
+    task_id: Mapped[uuid.UUID] = ref("dev_tasks.id")
+    run_id: Mapped[uuid.UUID] = ref("runs.id")
+    round: Mapped[int]
+    verdict: Mapped[str]
+    summary: Mapped[str] = mapped_column(server_default=text("''"))
+    # Findings: severity, rubric_id, test_id, repro, path, line, evidence, fix, downgraded.
+    findings: Mapped[JsonList] = mapped_column(JSONB_COL, server_default=text("'[]'::jsonb"))
+    model: Mapped[str | None]
+    created_at: Mapped[datetime] = created()
+
+
 class Run(Base):
     __tablename__ = "runs"
     __table_args__ = (
         one_of("kind", vocab.RUN_KIND),
         one_of("status", vocab.RUN_STATUS),
-        CheckConstraint('"round" >= 0 AND "round" <= 2', name="round"),
+        CheckConstraint('"round" >= 0 AND "round" <= 20', name="round"),
         Index(
             "uq_runs_one_active_top_level",
             "task_id",

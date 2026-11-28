@@ -11,6 +11,9 @@ export type Plan = Schemas["Plan"];
 export type Run = Schemas["Run"];
 export type TaskCreate = Schemas["TaskCreate"];
 export type TaskUpdate = Schemas["TaskUpdate"];
+export type TaskReview = Schemas["TaskReview"];
+export type ReviewFinding = Schemas["ReviewFinding"];
+export type TaskDiff = Schemas["TaskDiff"];
 
 const MAX_PAGES = 10;
 const ACTIVE_RUN_POLL_MS = 5000;
@@ -24,6 +27,8 @@ export const devboardKeys = {
   triage: (id: string) => ["devboard", "task", id, "triage"] as const,
   plan: (id: string) => ["devboard", "task", id, "plan"] as const,
   runs: (id: string) => ["devboard", "task", id, "runs"] as const,
+  review: (id: string) => ["devboard", "task", id, "review"] as const,
+  diff: (id: string) => ["devboard", "task", id, "diff"] as const,
   /** Outside the task prefix, so refreshing the card never refetches a chat mid-reply. */
   chat: (id: string) => ["devboard", "chat", id] as const,
 };
@@ -84,6 +89,42 @@ export function usePlan(taskId: string) {
     queryKey: devboardKeys.plan(taskId),
     queryFn: () =>
       orNull(unwrap(client.GET("/tasks/{taskId}/plan", { params: { path: { taskId } } }))),
+  });
+}
+
+/** The latest agent review of the card's branch; null when there is none yet. */
+export function useTaskReview(taskId: string, enabled: boolean) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: devboardKeys.review(taskId),
+    queryFn: () =>
+      orNull(unwrap(client.GET("/tasks/{taskId}/review", { params: { path: { taskId } } }))),
+    enabled,
+  });
+}
+
+/** The branch diff against its base; null when the card has no branch. */
+export function useTaskDiff(taskId: string, enabled: boolean) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: devboardKeys.diff(taskId),
+    queryFn: () =>
+      orNull(unwrap(client.GET("/tasks/{taskId}/diff", { params: { path: { taskId } } }))),
+    enabled,
+  });
+}
+
+/**
+ * Fetches the branch as `git format-patch` text. A plain link can't carry the bearer token,
+ * so the caller saves it from a blob.
+ */
+export function useTaskPatch(taskId: string) {
+  const client = useApiClient();
+  return useMutation({
+    mutationFn: () =>
+      unwrap(
+        client.GET("/tasks/{taskId}/patch", { params: { path: { taskId } }, parseAs: "text" }),
+      ),
   });
 }
 

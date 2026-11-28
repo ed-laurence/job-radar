@@ -23,7 +23,10 @@
 #      result bundle, no Postgres, no tests;
 #   8. triage mode (AGENT_MODE=triage) fails closed the same way: failed handoff, no
 #      triage.json, no result bundle, no Postgres, no suite run;
-#   9. scripts/gen-api.sh runs offline in the image (baked generators, egress blocked).
+#   9. review mode (AGENT_MODE=review) on a branch head with AGENT_BASE_SHA fails closed the
+#      same way: failed handoff, no review.json, no result bundle, no Postgres, no tests; an
+#      AGENT_BASE_SHA that is not an ancestor of the head is refused before the agent starts;
+#  10. scripts/gen-api.sh runs offline in the image (baked generators, egress blocked).
 # Exit: 0 all passed, 1 a check failed, 77 skipped (Docker not available).
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
@@ -285,6 +288,50 @@ print(f"  status={h['status']} summary={h['summary'][:70]}...", file=sys.stderr)
 PY
 }
 check "triage mode fails closed: no triage, no bundle, no suite" triage_fails_closed
+
+# ------------------------------------------------------------ review mode fails closed
+review_fails_closed() {
+  local repo="$WORK/repo-review" in="$WORK/in-review" out="$WORK/out-review" base
+  mkdir -p "$repo/docs/standards" "$in" "$out" "$WORK/out-review-bad"
+  printf '# AGENTS (isolation test)\n' > "$repo/AGENTS.md"
+  printf '# testing (isolation test)\n' > "$repo/docs/standards/testing.md"
+  git -C "$repo" -c init.defaultBranch=main init -q
+  git -C "$repo" add -A
+  git -C "$repo" -c user.name=t -c user.email=t@example.test commit -qm base
+  base="$(git -C "$repo" rev-parse HEAD)"
+  printf 'x = 1\n' > "$repo/change.py"
+  git -C "$repo" add -A
+  git -C "$repo" -c user.name=t -c user.email=t@example.test commit -qm "agent change"
+  git -C "$repo" bundle create "$in/input.bundle" HEAD main >/dev/null 2>&1
+  AGENT_MODE=review RUN_ID=iso-run-4 AGENT_TIMEOUT_S=120 AGENT_BASE_SHA="$base" \
+    ANTHROPIC_AUTH_TOKEN=jrt2.isolation.fake COORDINATOR_TOKEN=jrc1.isolation.fake \
+    "$ROOT/sandbox/run.sh" --task-id iso-review --in "$in" --out "$out" \
+    >"$WORK/run-review.log" 2>&1 || return 1
+  grep -q "coordinator unreachable" "$WORK/run-review.log" || return 1
+  grep -q "reviewer, read-only" "$WORK/run-review.log" || return 1
+  if grep -q "postgres 16" "$WORK/run-review.log"; then return 1; fi
+  "$PY" - "$out" <<'PY'
+import json, os, sys
+out = sys.argv[1]
+h = json.load(open(os.path.join(out, "handoff.json"), encoding="utf-8"))
+assert h["status"] == "failed", h["status"]
+assert h["summary"].startswith("Stopped: coordinator unreachable"), h["summary"]
+assert "review run: no tests run" in h["skipped_checks"], h["skipped_checks"]
+assert not os.path.exists(os.path.join(out, "review.json"))
+assert not os.path.exists(os.path.join(out, "result.bundle"))
+log = [json.loads(line) for line in open(os.path.join(out, "agent.log"), encoding="utf-8")]
+assert [e["event"] for e in log] == ["stop"], log  # no model turn was taken
+print(f"  status={h['status']} summary={h['summary'][:70]}...", file=sys.stderr)
+PY
+  # A base that the head does not descend from never reaches the agent.
+  if AGENT_MODE=review RUN_ID=iso-run-5 AGENT_TIMEOUT_S=120 AGENT_BASE_SHA="$(printf 'f%.0s' {1..40})" \
+    ANTHROPIC_AUTH_TOKEN=jrt2.isolation.fake COORDINATOR_TOKEN=jrc1.isolation.fake \
+    "$ROOT/sandbox/run.sh" --task-id iso-review-bad --in "$in" --out "$WORK/out-review-bad" \
+    >"$WORK/run-review-bad.log" 2>&1; then return 1; fi
+  grep -q "AGENT_BASE_SHA is not in the bundle" "$WORK/run-review-bad.log" || return 1
+  if grep -q "reviewer, read-only" "$WORK/run-review-bad.log"; then return 1; fi
+}
+check "review mode fails closed: no review, no bundle, no tests" review_fails_closed
 
 # ------------------------------------------------------------ gen-api.sh offline in the image
 gen_api_offline() {

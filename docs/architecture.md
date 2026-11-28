@@ -228,6 +228,45 @@ Specified in `plan.md` "Sandboxing" and "Code review"; the jobs are provisioned 
   Without the sandbox, the in-app `TriageLlmAgent` gets the writable file list as data (a frozen
   `backend/tests/fixtures/llm/devboard/repo_files.txt` under `LLM=replay`, so offline prompt hashes
   stay stable). Either way, code applies the repo path check and the routing rules.
+- **Models and spend.** Writer (dev) and reviewer runs use Sonnet, the planner Opus, and triage Sonnet (`AGENT_MODEL_<MODE>` overrides). Each run gets its own llm-proxy spend ledger (the token key is `<task8>.<run id>`), so an earlier run of the same card never uses up a later run's budget.
+- **Publisher checks** (`domain/devboard/publisher.py`, trusted code outside the sandbox). After a
+  dev run's bundle is published to the scratch remote, the runner reads the branch's changes
+  (`LocalGitHost.changes`) and checks them:
+  - every path is inside the run's leases and the write scope (`PUB-LEASE`, `PUB-SCOPE`);
+  - an existing test changes only under a `modify-tests:` label (`PUB-TESTS`);
+  - no new skip or ignore pragma, unless an `allow:` label permits it (`PUB-PRAGMA`);
+  - at most 400 changed lines, not counting regenerated code (`PUB-SIZE`);
+  - no added line that the redaction filter would change (`PUB-SECRET`,
+    `adapters/agents/publish_checks.py`).
+
+  A violation deletes the branch and fails the run, and the card is blocked. A clean run stores
+  `branch` and `base_sha` on the card. Red→green and the generated-code sync check are not built
+  yet.
+- **Agent review** (docs/features/agent-review.md). Entering `agent_review` starts a read-only
+  `review` run (`AGENT_MODE=review`, Sonnet; `AGENT_REVIEW_BUDGET_USD` 1.00,
+  `AGENT_REVIEW_TIMEOUT_S` 600), checked out at the branch head.
+  - The reviewer's `get_task` is isolated. It gets the brief, the plan's acceptance criteria, the
+    base and branch, the diff stat, the dev run's test summary and any earlier blockers. It never
+    gets the writer's steps or handoff.
+  - The reviewer writes `/out/review.json` through `submit_review`.
+  - Code applies `review_policy`: a BLOCKER without a rubric id, test id or repro becomes a NIT;
+    findings on unchanged files are dropped; duplicates are merged.
+  - The review is stored in `task_reviews`. Verdicts: `approved` → `human_review`;
+    `changes_requested` (round 1) → an automatic rework dev run from the branch head with
+    `review_blockers`; `needs_decision` (round 2) → `human_review` with a `needs-decision` label.
+- **GitHub PRs** (`CODE_HOST=github`, docs/features/github-prs.md). `GitHubHost` snapshots GitHub
+  `main` instead of the working tree. After the Publisher checks pass, it adds a publish commit
+  carrying the trailers `agent-pr.yml` reads, and pushes it with the deploy key to
+  `agent/task-<card id>`, one branch per card and never forced. `agent-pr.yml` opens the PR.
+  `PrSyncTask`, started by the app lifespan, polls `gh pr list` (read-only, your gh login) every
+  `PR_SYNC_INTERVAL_S`. It stores `pr_url`, moves a merged card from `human_review` to `done`,
+  and labels a PR closed without merging `pr-closed`. `scripts/github-setup.sh` is the one-time
+  setup.
+- **Human review**. `GET /tasks/{id}/diff`, `/patch` and `/review` serve the redacted diff (through
+  `LocalBranchViews`), a `git format-patch` file to apply with `git am`, and the latest review. In
+  `human_review` a maintainer can mark the card done (standing in for the merge webhook locally)
+  or request changes. The notes are PII-masked, stored as a BLOCKER and start a rework run, and
+  each request adds a review round.
 - Existing tests are read-only for agents. A plan lists the ones it must edit in `tests_to_change`;
   approving it with `allow_test_changes` adds `modify-tests:<path>` labels, and the writer may then
   edit only existing test files those labels cover (exact path, or a directory prefix). The rule is
@@ -323,7 +362,15 @@ sequenceDiagram
         M->>A: POST /tasks/{id}/plan/approve (tests + plan)
         M->>A: move → ready → agent_dev
         R->>DB: steps, leases, handoff
-        Note over R: Today SimulatedAgentRunner.<br/>M2: sandbox jobs + Publisher + review
+        Note over R: Sandbox writer (or the simulation).<br/>Publisher checks, then publish
+        A->>SM: → agent_review
+        A->>R: read-only review run (isolated context)
+        alt no blockers, or round 2
+            A->>SM: → human_review
+            M->>A: move → done, or → changes_requested (notes)
+        else blockers in round 1
+            A->>SM: → changes_requested → agent_dev (rework)
+        end
     end
     DB-->>M: GET /runs/{id}/steps (SSE via shared LISTEN)
 ```

@@ -1,6 +1,7 @@
 """The dev-board state machine (spec `moveTask`). The client never forces a column.
 
-User moves are checked here; system moves (triage, agent runs, the merge webhook, the kill
+User moves are checked here (a maintainer ends human review: `done`, or `changes_requested`
+with notes); system moves (triage, agent runs, the merge webhook, the kill
 switch) go through `check_system_move`. `out_of_scope` can never reach `ready`.
 """
 
@@ -20,7 +21,11 @@ MAINTAINER_TARGETS: dict[Column, frozenset[Column]] = {
     C.TRIAGED: frozenset({C.PLAN_REVIEW}),
     C.PLAN_REVIEW: frozenset({C.READY}),
     C.READY: frozenset({C.AGENT_DEV}),
+    # `done` stands in for the merge webhook locally; `changes_requested` needs the notes.
+    C.HUMAN_REVIEW: frozenset({C.DONE, C.CHANGES_REQUESTED}),
 }
+# User moves that need a `reason` (blocking a card, or a human's review notes).
+_NEEDS_REASON = frozenset({(C.HUMAN_REVIEW, C.CHANGES_REQUESTED)})
 _OPEN_TARGETS: dict[Column, frozenset[Column]] = {
     C.OUT_OF_SCOPE: frozenset({C.BACKLOG}),
     C.TRIAGED: frozenset({C.BACKLOG}),
@@ -79,8 +84,11 @@ def check_user_move(
             "That move isn't allowed from this column.", allowed=_ordered(allowed)
         )
     is_reorder = target is task.column
-    if target is C.BLOCKED and not is_reorder and not (reason and reason.strip()):
+    has_reason = bool(reason and reason.strip())
+    if target is C.BLOCKED and not is_reorder and not has_reason:
         raise ValidationFailed("Say why the card is blocked.")
+    if (task.column, target) in _NEEDS_REASON and not has_reason:
+        raise ValidationFailed("Say what needs to change.")
     needs_approval = task.column is C.PLAN_REVIEW and target is C.READY
     return MoveCheck(is_reorder=is_reorder, needs_plan_approval=needs_approval)
 

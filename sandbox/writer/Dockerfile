@@ -108,6 +108,7 @@ COPY sandbox/writer/entrypoint.sh sandbox/writer/offline-caches.sh sandbox/write
      sandbox/writer/agent_prompt.py sandbox/writer/coordinator_client.py \
      sandbox/writer/coordinator_tools.py sandbox/writer/agent_sdk.py sandbox/writer/llm_usage.py \
      sandbox/writer/run_log.py sandbox/writer/plan_contract.py sandbox/writer/triage_contract.py \
+     sandbox/writer/review_contract.py \
      /opt/sandbox/
 RUN set -eux; \
     useradd --uid "${SANDBOX_UID}" --user-group --no-create-home --home-dir /tmp/home \
@@ -115,7 +116,7 @@ RUN set -eux; \
     mkdir -p /workspace /in /out; \
     chown "${SANDBOX_UID}:${SANDBOX_UID}" /workspace /out; \
     chmod 0755 /opt/sandbox/entrypoint.sh /opt/sandbox/offline-caches.sh; \
-    /usr/local/bin/python3 -c "import sys; sys.path.insert(0, '/opt/sandbox'); import handoff, plan_contract, triage_contract"; \
+    /usr/local/bin/python3 -c "import sys; sys.path.insert(0, '/opt/sandbox'); import handoff, plan_contract, triage_contract, review_contract"; \
     /opt/agent/venv/bin/python -c "import sys; sys.path.insert(0, '/opt/sandbox'); import agent_runner, agent_sdk"
 
 # Offline everything at runtime.

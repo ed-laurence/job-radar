@@ -1329,8 +1329,10 @@ export interface paths {
          *     | `triaged`, `plan_review`, `ready` | `backlog` | back out |
          *     | any except `done`, `agent_dev`, `agent_review` | `blocked` | `reason` required |
          *     | `blocked` | the column it came from, or `backlog` | |
+         *     | `human_review` | `done` | maintainer; stands in for the merge webhook locally |
+         *     | `human_review` | `changes_requested` | maintainer; `reason` (the notes) required; starts a rework dev run |
          *
-         *     System-only moves: `backlog`→`triaged`/`out_of_scope` (triage), `agent_dev`→`agent_review`, `agent_review`→`human_review`/`changes_requested`, `changes_requested`→`agent_dev`, `human_review`→`done` (merge webhook). `out_of_scope` can never move to `ready`. A `user` asking for a maintainer move gets 403.
+         *     System-only moves: `backlog`→`triaged`/`out_of_scope` (triage), `agent_dev`→`agent_review`, `agent_review`→`human_review`/`changes_requested`, `changes_requested`→`agent_dev`, `human_review`→`done` (the merge webhook, once on GitHub). `out_of_scope` can never move to `ready`. A `user` asking for a maintainer move gets 403.
          */
         post: operations["moveTask"];
         delete?: never;
@@ -1410,6 +1412,75 @@ export interface paths {
          * @description Runs the read-only dev-lead and the test-only step. Card must be in `plan_review`.
          */
         post: operations["requestTaskPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{taskId}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Dev task id. */
+                taskId: components["parameters"]["TaskId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Latest agent review
+         * @description The latest agent review of the card's branch (verdict and findings). 404 when there is none.
+         */
+        get: operations["getTaskReview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{taskId}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Dev task id. */
+                taskId: components["parameters"]["TaskId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Branch diff
+         * @description The unified diff of the card's agent branch against its base, redacted. 404 when the card has no branch.
+         */
+        get: operations["getTaskDiff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{taskId}/patch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Dev task id. */
+                taskId: components["parameters"]["TaskId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Branch as a patch
+         * @description The agent branch as `git format-patch` output, to apply with `git am`. 404 when the card has no branch.
+         */
+        get: operations["getTaskPatch"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2363,6 +2434,11 @@ export interface components {
             priority?: components["schemas"]["TaskPriority"];
             severity?: components["schemas"]["TaskSeverity"];
             route?: components["schemas"]["TriageRoute"];
+            /** @description The card's latest published agent branch (`agent/<task>-<run>`). */
+            branch?: string;
+            base_sha?: string;
+            /** @description Review rounds so far. Agent reviews stop after round 2 (`needs_decision`); each human Request changes adds a round. */
+            review_round?: number;
             /** @description The columns the caller may move this card to now (its own column excluded), from the server's state machine and the caller's role. A move to `ready` also needs an approved plan. */
             allowed_columns?: components["schemas"]["TaskColumn"][];
             out_of_scope_reason?: string;
@@ -2480,6 +2556,43 @@ export interface components {
             provider?: components["schemas"]["LlmProvider"];
             /** Format: date-time */
             created_at: string;
+        };
+        ReviewFinding: {
+            /** @enum {string} */
+            severity: "BLOCKER" | "NIT";
+            rubric_id?: string;
+            test_id?: string;
+            repro?: string;
+            path: string;
+            line?: number;
+            evidence: string;
+            fix?: string;
+            /** @description A BLOCKER without a citation that code downgraded to NIT. */
+            downgraded?: boolean;
+        };
+        TaskReview: {
+            /** Format: uuid */
+            task_id: string;
+            /** Format: uuid */
+            run_id: string;
+            round: number;
+            /** @enum {string} */
+            verdict: "approved" | "changes_requested" | "needs_decision";
+            summary: string;
+            findings: components["schemas"]["ReviewFinding"][];
+            model?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        TaskDiff: {
+            branch: string;
+            base_sha: string;
+            files_changed: number;
+            insertions: number;
+            deletions: number;
+            /** @description Unified diff, redacted. Cut at 400 000 characters (see `truncated`). */
+            diff: string;
+            truncated: boolean;
         };
         TriageRequest: {
             /** Format: date-time */
@@ -6463,6 +6576,102 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getTaskReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Dev task id. */
+                taskId: components["parameters"]["TaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Review. */
+            200: {
+                headers: {
+                    "RateLimit-Limit": components["headers"]["RateLimit-Limit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimit-Remaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskReview"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getTaskDiff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Dev task id. */
+                taskId: components["parameters"]["TaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Diff. */
+            200: {
+                headers: {
+                    "RateLimit-Limit": components["headers"]["RateLimit-Limit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimit-Remaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDiff"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getTaskPatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Dev task id. */
+                taskId: components["parameters"]["TaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Patch file. */
+            200: {
+                headers: {
+                    "RateLimit-Limit": components["headers"]["RateLimit-Limit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimit-Remaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/x-patch": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
             500: components["responses"]["InternalError"];
         };

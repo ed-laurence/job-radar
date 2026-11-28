@@ -4,7 +4,10 @@
   the route puts an in-scope card at the top (`next`) or bottom (`later`) of `triaged`, or
   (`now`) moves it on to `plan_review` and starts the plan as a maintainer's drag would
 - `triaged`->`plan_review`: the read-only dev-lead plan plus the test-only step
-- `ready`->`agent_dev`: the dev run (simulated until M2), then `agent_review`
+- `ready`->`agent_dev`: the dev run, then `agent_review`, which starts the review run
+- review verdicts (`review_flow`): `approved` and `needs_decision` -> `human_review`;
+  `changes_requested` -> a rework dev run with the blockers (back to `agent_dev`)
+- `human_review`->`changes_requested` (a maintainer, with notes): the same rework run
 
 Work runs in the background through the `Dispatcher`; every step is stored and streamed.
 """
@@ -22,6 +25,7 @@ from app.domain.devboard.model import (
     Actor,
     Column,
     EventKind,
+    ReviewVerdict,
     Route,
     RunKind,
     RunRecord,
@@ -32,6 +36,7 @@ from app.domain.devboard.model import (
 from app.domain.devboard.placement import place_first, place_last
 from app.domain.devboard.plans import PlanService, plan_paths
 from app.domain.devboard.repo_paths import unknown_paths
+from app.domain.devboard.review_flow import ReviewFlow, ReviewInputs, without_needs_decision
 from app.domain.devboard.runs import RunService, RunTools
 from app.domain.devboard.triage_policy import finalise, shown_paths, triage_problem
 from app.domain.errors import Conflict, DomainError, UpstreamUnavailable, ValidationFailed
@@ -53,7 +58,12 @@ TRIAGE_COLUMNS = frozenset({Column.BACKLOG, Column.TRIAGED, Column.OUT_OF_SCOPE}
 # Triage sees the other open cards (for its duplicate check), at most this many.
 MAX_OPEN_CARDS = 50
 _OPEN_COLUMNS = tuple(column for column in Column if column is not Column.DONE)
-_AGENTS = {RunKind.TRIAGE: "triage", RunKind.PLAN: "dev-lead", RunKind.DEV: "dev-lead"}
+_AGENTS = {
+    RunKind.TRIAGE: "triage",
+    RunKind.PLAN: "dev-lead",
+    RunKind.DEV: "dev-lead",
+    RunKind.REVIEW: "reviewer",
+}
 
 type Work = Callable[[Actor, RunRecord], Awaitable[None]]
 
@@ -80,6 +90,7 @@ class Workflow:
         system: tuple[Clock, Ids],
         *,
         repo_files: RepoFiles,
+        review: ReviewInputs | None = None,
     ) -> None:
         self._tasks, self._runs = stores.tasks, stores.runs
         self._repo_files = repo_files
@@ -87,6 +98,7 @@ class Workflow:
         self._agents = agents
         self._dispatcher = dispatcher
         self._clock, self._ids = system
+        self._reviews = ReviewFlow(self._board, self._tasks, review or ReviewInputs(), system)
 
     # ------------------------------------------------------------ BoardHooks
     async def on_created(self, actor: Actor, task: TaskRecord) -> None:
@@ -96,8 +108,12 @@ class Workflow:
         if task.column in TRIAGE_COLUMNS and task.active_run_id is None:
             await self.queue_triage(actor, task.id)
 
-    async def on_moved(self, actor: Actor, task: TaskRecord, from_column: Column) -> None:
-        if from_column is Column.OUT_OF_SCOPE and task.column is Column.BACKLOG:
+    async def on_moved(
+        self, actor: Actor, task: TaskRecord, from_column: Column, *, reason: str | None = None
+    ) -> None:
+        if from_column is Column.HUMAN_REVIEW and task.column is Column.CHANGES_REQUESTED:
+            await self._rework(actor, task.id, notes=reason or "")
+        elif from_column is Column.OUT_OF_SCOPE and task.column is Column.BACKLOG:
             await self.queue_triage(actor, task.id)
         elif task.column is Column.PLAN_REVIEW:
             await self.request_plan(actor, task.id)
@@ -143,7 +159,14 @@ class Workflow:
 
     # ------------------------------------------------------------ execution
     async def _launch(
-        self, actor: Actor, task: TaskRecord, kind: RunKind, work: Work, *, start: bool = True
+        self,
+        actor: Actor,
+        task: TaskRecord,
+        kind: RunKind,
+        work: Work,
+        *,
+        start: bool = True,
+        review_round: int = 0,
     ) -> RunRecord:
         run = RunRecord(
             id=self._ids.new_id(),
@@ -152,6 +175,7 @@ class Workflow:
             status=RunStatus.QUEUED,
             created_at=self._clock.now(),
             agent=_AGENTS.get(kind),
+            round=review_round,
         )
         await self._runs.insert(actor.user_id, run)
         await self._board.record(actor, task, EventKind.RUN_STARTED, run.id)
@@ -183,6 +207,8 @@ class Workflow:
     async def _context(self, actor: Actor, run: RunRecord) -> RunContext:
         task = await self._board.get(actor, run.task_id)
         is_triage = run.kind is RunKind.TRIAGE
+        # Review runs see the previous round; rework dev runs (round > 0) the blockers to fix.
+        sees_review = run.kind is RunKind.REVIEW or (run.kind is RunKind.DEV and run.round > 0)
         return RunContext(
             run=run,
             task=task,
@@ -190,6 +216,7 @@ class Workflow:
             plan=await self._tasks.latest_plan(actor.user_id, task.id),
             triage=await self._tasks.latest_triage(actor.user_id, task.id),
             open_cards=await self._open_cards(actor, task.id) if is_triage else (),
+            review=await self._tasks.latest_review(actor.user_id, task.id) if sees_review else None,
         )
 
     async def _open_cards(self, actor: Actor, task_id: uuid.UUID) -> tuple[CardRef, ...]:
@@ -275,16 +302,52 @@ class Workflow:
         # human may have moved it while the run worked. The run still finishes with its outcome
         # and spend either way.
         task = await self._tasks.get(actor.user_id, run.task_id)
+        in_review: TaskRecord | None = None
         if task is not None and task.column is Column.AGENT_DEV:
             if result.is_success:
-                await self._board.system_move(
-                    agent, run.task_id, Column.AGENT_REVIEW, run_id=run.id
+                in_review = await self._board.system_move(
+                    agent,
+                    run.task_id,
+                    Column.AGENT_REVIEW,
+                    run_id=run.id,
+                    change=lambda card: _published(card, result),
                 )
             else:
                 await self._board.system_move(
                     agent, run.task_id, Column.BLOCKED, reason=result.outcome, run_id=run.id
                 )
         await self._finish_result(actor, run, result)
+        if in_review is not None:
+            next_round = in_review.review_round + 1
+            await self._launch(
+                actor, in_review, RunKind.REVIEW, self._review, review_round=next_round
+            )
+
+    async def _review(self, actor: Actor, run: RunRecord) -> None:
+        context = await self._context(actor, run)
+        try:
+            result = await self._agents.runner.run(context, self._tools(actor, run))
+        except DomainError as error:
+            result = AgentResult(is_success=False, outcome=error.detail or "The review failed.")
+        outcome = await self._reviews.conclude(actor, run, result)
+        await self._finish_result(actor, run, outcome.result)
+        if outcome.verdict is ReviewVerdict.CHANGES_REQUESTED:
+            await self._rework(actor, run.task_id, notes=None)
+
+    async def _rework(self, actor: Actor, task_id: uuid.UUID, *, notes: str | None) -> None:
+        """From `changes_requested`: a fresh dev run with the same plan and leases, given the
+        latest review (the agent's, or the human's `notes` stored as one)."""
+        task = await self._board.get(actor, task_id)
+        run = await self._launch(
+            actor, task, RunKind.DEV, self._develop, start=False, review_round=task.review_round
+        )
+        if notes is not None:
+            await self._reviews.add_notes(actor, task, run, notes)
+        agent = actor.as_agent()
+        await self._board.system_move(
+            agent, task_id, Column.AGENT_DEV, run_id=run.id, change=without_needs_decision
+        )
+        self._start(actor, run, self._develop)
 
     async def _finish_result(self, actor: Actor, run: RunRecord, result: AgentResult) -> None:
         status = RunStatus.SUCCEEDED if result.is_success else RunStatus.FAILED
@@ -312,6 +375,13 @@ def _apply_triage(task: TaskRecord, triage: TriageRecord) -> TaskRecord:
         route=triage.route,
         out_of_scope_reason=triage.out_of_scope_reason,
     )
+
+
+def _published(task: TaskRecord, result: AgentResult) -> TaskRecord:
+    """A dev run's branch replaces the card's; a run that published none keeps the old one."""
+    if not result.branch:
+        return task
+    return replace(task, branch=result.branch, base_sha=result.base_sha)
 
 
 def _triage_outcome(triage: TriageRecord) -> str:
