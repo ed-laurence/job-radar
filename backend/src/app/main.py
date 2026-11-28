@@ -250,9 +250,15 @@ def build_app(container: Container) -> FastAPI:
         scheduler = getattr(app.state, "scan_scheduler", None)
         if scheduler is not None:
             scheduler.start()
+        # Local only, CODE_HOST=github: poll agent PRs (merged -> done).
+        pr_sync = getattr(app.state, "pr_sync", None)
+        if pr_sync is not None:
+            pr_sync.start()
         try:
             yield
         finally:
+            if pr_sync is not None:
+                await pr_sync.stop()
             if scheduler is not None:
                 await scheduler.stop()
             await container.aclose()

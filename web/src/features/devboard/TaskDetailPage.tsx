@@ -13,19 +13,28 @@ import {
   useApprovePlan,
   useDeleteTask,
   useKillTask,
+  useMoveTask,
   usePlan,
   useRuns,
   useTask,
+  useTaskDiff,
+  useTaskPatch,
+  useTaskReview,
   useTriage,
   useUpdateTask,
 } from "./api";
+import { ChangesPanel } from "./ChangesPanel";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { COLUMN_LABELS } from "./columns";
+import { COLUMN_LABELS, type TaskColumn } from "./columns";
 import styles from "./DevBoard.module.css";
+import { patchFilename, saveTextFile } from "./download";
 import { actionErrorMessage } from "./messages";
-import { canEditTask } from "./model";
+import { canEditTask, moveErrorMessage, rankAtEnd, type Task } from "./model";
 import { PlanPanel } from "./PlanPanel";
+import { ReviewActions } from "./ReviewActions";
+import { ReviewPanel } from "./ReviewPanel";
 import { RunTree } from "./RunTree";
+import { NEEDS_DECISION_LABEL } from "./review";
 import { TaskChat } from "./TaskChat";
 import { TaskFormDrawer, type TaskFormValues } from "./TaskFormDrawer";
 import { TriagePanel } from "./TriagePanel";
@@ -42,7 +51,16 @@ function sameLabels(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((l, i) => l === b[i]);
 }
 
-/** One card: details, triage, plan (with approval), the run tree with live steps, and the kill switch. */
+const REVIEW_NOTICE: Partial<Record<TaskColumn, string>> = {
+  done: "Marked done. The card moved to Done.",
+  changes_requested:
+    "Changes requested. The card was sent back to the agent with your notes, and a new dev run starts.",
+};
+
+/**
+ * One card: details, triage, plan (with approval), the branch's changes and agent review (with
+ * the maintainer's decision), the run tree with live steps, and the kill switch.
+ */
 export function TaskDetailPage({ taskId, apiBase }: TaskDetailPageProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -55,6 +73,12 @@ export function TaskDetailPage({ taskId, apiBase }: TaskDetailPageProps) {
   const remove = useDeleteTask(taskId);
   const approve = useApprovePlan(taskId);
   const kill = useKillTask(taskId);
+  const hasBranch = Boolean(task.data?.branch);
+  const diff = useTaskDiff(taskId, hasBranch);
+  const review = useTaskReview(taskId, hasBranch);
+  const patch = useTaskPatch(taskId);
+  const move = useMoveTask();
+  const [moveTarget, setMoveTarget] = useState<TaskColumn | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [notice, setNotice] = useState("");
 
@@ -82,6 +106,32 @@ export function TaskDetailPage({ taskId, apiBase }: TaskDetailPageProps) {
     remove.reset();
     kill.reset();
     setDialog(d);
+  };
+
+  const decide = (toColumn: TaskColumn, reason?: string) => {
+    setMoveTarget(toColumn);
+    setNotice("");
+    const rank = rankAtEnd(
+      queryClient.getQueryData<Task[]>(devboardKeys.tasks()),
+      toColumn,
+      t.rank,
+    );
+    move.mutate(
+      { task: t, toColumn, rank, ...(reason ? { reason } : {}) },
+      {
+        onSuccess: () => setNotice(REVIEW_NOTICE[toColumn] ?? ""),
+        onError: (error) => {
+          if (isApiError(error) && error.status === 409) refreshAll();
+        },
+      },
+    );
+  };
+
+  const downloadPatch = () => {
+    const branch = t.branch ?? diff.data?.branch ?? "";
+    patch.mutate(undefined, {
+      onSuccess: (text) => saveTextFile(text, patchFilename(branch), "text/x-patch"),
+    });
   };
 
   const onSave = (values: TaskFormValues) => {
@@ -133,6 +183,13 @@ export function TaskDetailPage({ taskId, apiBase }: TaskDetailPageProps) {
       <div role="status" aria-live="polite" className={notice ? styles.notice : undefined}>
         {notice}
       </div>
+
+      {t.labels?.includes(NEEDS_DECISION_LABEL) ? (
+        <p className={styles.alert}>
+          <strong>Needs your decision</strong>. The agent reviewer still found blockers after the
+          last review round. Read the findings, then mark the card done or request changes.
+        </p>
+      ) : null}
 
       <section className={styles.section} aria-labelledby="details-title">
         <h2 id="details-title">Details</h2>
@@ -190,6 +247,35 @@ export function TaskDetailPage({ taskId, apiBase }: TaskDetailPageProps) {
           );
         }}
       />
+      {hasBranch ? (
+        <>
+          <ChangesPanel
+            diff={diff.data}
+            loading={diff.isPending}
+            error={diff.isError ? actionErrorMessage(diff.error, "load the changes") : undefined}
+            downloading={patch.isPending}
+            downloadError={
+              patch.isError ? actionErrorMessage(patch.error, "download the patch") : undefined
+            }
+            onDownloadPatch={downloadPatch}
+          />
+          <ReviewPanel
+            review={review.data}
+            loading={review.isPending}
+            error={review.isError ? actionErrorMessage(review.error, "load the review") : undefined}
+          />
+        </>
+      ) : null}
+      {maintainer && t.column === "human_review" ? (
+        <ReviewActions
+          pending={move.isPending}
+          error={
+            move.isError && moveTarget ? moveErrorMessage(move.error, t, moveTarget) : undefined
+          }
+          onMarkDone={() => decide("done")}
+          onRequestChanges={(notes) => decide("changes_requested", notes)}
+        />
+      ) : null}
       <RunTree
         runs={runs.data}
         plan={plan.data}

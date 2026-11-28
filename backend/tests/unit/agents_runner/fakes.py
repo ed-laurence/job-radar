@@ -8,11 +8,12 @@ import json
 import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 from app.adapters.agents.usage import ProxyUsage
+from app.adapters.codehost.github import PublishTrailers, PushedBranch
 from app.adapters.codehost.local_git import DiffStat, GitError, PublishedBranch, Snapshot
 from app.domain.devboard.model import (
     Actor,
@@ -21,14 +22,22 @@ from app.domain.devboard.model import (
     LeaseRecord,
     NewStep,
     PlanRecord,
+    ReviewRecord,
     Risk,
     RunKind,
     RunRecord,
     RunStatus,
     StepRecord,
+    Subtask,
     TaskRecord,
 )
-from app.domain.ports.devboard import AgentResult, LeaseOutcome, RunContext, RunTools
+from app.domain.ports.devboard import (
+    AgentResult,
+    ChangeSet,
+    LeaseOutcome,
+    RunContext,
+    RunTools,
+)
 
 NOW = datetime(2026, 1, 5, 9, 0, tzinfo=UTC)
 TASK_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
@@ -168,10 +177,32 @@ class FakeCodeHost:
     published: list[tuple[Path, str, str, str]] = field(
         default_factory=list[tuple[Path, str, str, str]]
     )
+    # What `changes` reports for every published branch (empty: nothing to check).
+    change_set: ChangeSet = field(default_factory=lambda: ChangeSet(files=(), added_lines=()))
+    changes_asked: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+    deleted: list[str] = field(default_factory=list[str])
+    snapshots: int = 0
+    branch_bundles: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+    fail_branch_bundle: bool = False
 
     async def snapshot(self, dest: Path) -> Snapshot:
+        self.snapshots += 1
         await asyncio.to_thread(dest.write_bytes, b"input bundle")
         return Snapshot(bundle=dest, base_sha=BASE_SHA)
+
+    async def bundle_branch(self, branch: str, base_sha: str, dest: Path) -> Snapshot:
+        if self.fail_branch_bundle:
+            raise GitError("git fetch failed (exit 128)")
+        self.branch_bundles.append((branch, base_sha))
+        await asyncio.to_thread(dest.write_bytes, b"branch bundle")
+        return Snapshot(bundle=dest, base_sha=base_sha)
+
+    async def changes(self, base_sha: str, branch: str) -> ChangeSet:
+        self.changes_asked.append((base_sha, branch))
+        return self.change_set
+
+    async def delete_branch(self, branch: str) -> None:
+        self.deleted.append(branch)
 
     async def publish(
         self, bundle: Path, source_ref: str, branch: str, base_sha: str
@@ -187,6 +218,22 @@ class FakeCodeHost:
 
     async def diff_stat(self, base_sha: str, branch: str) -> DiffStat:
         return DiffStat(files_changed=0, insertions=0, deletions=0, text=f"{base_sha}..{branch}")
+
+
+@dataclass
+class FakePusher:
+    """Stands in for GitHubHost.push: records what would be pushed, or fails like git."""
+
+    fail: bool = False
+    pushed: list[tuple[str, PublishTrailers]] = field(
+        default_factory=list[tuple[str, PublishTrailers]]
+    )
+
+    async def push(self, branch: str, trailers: PublishTrailers) -> PushedBranch:
+        if self.fail:
+            raise GitError("git push failed (exit 1)")
+        self.pushed.append((branch, trailers))
+        return PushedBranch(branch=f"agent/task-{trailers.task_id}", sha="d" * 40)
 
 
 @dataclass
@@ -236,13 +283,19 @@ class FakePlanner:
         return AgentResult(is_success=True, outcome="Plan ready for review.", model="simulated")
 
 
-def plan(*, approved: bool = True, minutes: int = 30, budget_usd: float = 2.0) -> PlanRecord:
+def plan(
+    *,
+    approved: bool = True,
+    minutes: int = 30,
+    budget_usd: float = 2.0,
+    subtasks: tuple[Subtask, ...] = (),
+) -> PlanRecord:
     return PlanRecord(
         id=uuid.uuid4(),
         task_id=TASK_ID,
         version=1,
         mode="single",
-        subtasks=(),
+        subtasks=subtasks,
         acceptance_tests=("tests/unit/test_x.py::test_y",),
         budget_usd=budget_usd,
         budget_minutes=minutes,
@@ -253,8 +306,23 @@ def plan(*, approved: bool = True, minutes: int = 30, budget_usd: float = 2.0) -
     )
 
 
+@dataclass(frozen=True)
+class CardState:
+    """What a card carries after a dev run published: its branch, base and labels."""
+
+    branch: str | None = None
+    base_sha: str | None = None
+    labels: tuple[str, ...] = ()
+    review_round: int = 0
+
+
 def context(
-    kind: RunKind = RunKind.DEV, plan_record: PlanRecord | None = None, *, with_plan: bool = True
+    kind: RunKind = RunKind.DEV,
+    plan_record: PlanRecord | None = None,
+    *,
+    with_plan: bool = True,
+    card: CardState | None = None,
+    review: ReviewRecord | None = None,
 ) -> RunContext:
     run = RunRecord(id=RUN_ID, task_id=TASK_ID, kind=kind, status=RunStatus.RUNNING, created_at=NOW)
     task = TaskRecord(
@@ -268,6 +336,14 @@ def context(
         created_at=NOW,
         updated_at=NOW,
     )
+    if card is not None:
+        task = replace(
+            task,
+            branch=card.branch,
+            base_sha=card.base_sha,
+            labels=card.labels,
+            review_round=card.review_round,
+        )
     actor = Actor(user_id=USER_ID, kind=ActorKind.SYSTEM)
     chosen = plan_record if plan_record is not None else (plan() if with_plan else None)
-    return RunContext(run=run, task=task, actor=actor, plan=chosen, triage=None)
+    return RunContext(run=run, task=task, actor=actor, plan=chosen, triage=None, review=review)

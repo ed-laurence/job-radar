@@ -18,11 +18,13 @@ from app.adapters.db.devboard_mappers import (
     triage_record,
     triage_values,
 )
+from app.adapters.db.devboard_reviews import review_record, review_values
 from app.adapters.db.engine import user_transaction
 from app.adapters.db.tables_board import (
     DevTask,
     TaskEvent,
     TaskPlan,
+    TaskReview,
     TaskTriage,
 )
 from app.domain.devboard.model import (
@@ -31,6 +33,7 @@ from app.domain.devboard.model import (
     Column,
     EventKind,
     PlanRecord,
+    ReviewRecord,
     TaskEventRecord,
     TaskRecord,
     TriageRecord,
@@ -218,6 +221,21 @@ class PgTaskStore:
         async with user_transaction(self._sessions, user_id) as session:
             row = await session.scalar(query)
         return None if row is None else plan_record(row)
+
+    async def add_review(self, user_id: uuid.UUID, review: ReviewRecord) -> None:
+        async with user_transaction(self._sessions, user_id) as session:
+            await session.execute(insert(TaskReview).values(review_values(review)))
+
+    async def latest_review(self, user_id: uuid.UUID, task_id: uuid.UUID) -> ReviewRecord | None:
+        query = (
+            select(TaskReview)
+            .where(TaskReview.task_id == task_id)
+            .order_by(TaskReview.created_at.desc(), TaskReview.round.desc(), TaskReview.id.desc())
+            .limit(1)
+        )
+        async with user_transaction(self._sessions, user_id) as session:
+            row = await session.scalar(query)
+        return None if row is None else review_record(row)
 
     async def save_plan(
         self, user_id: uuid.UUID, plan: PlanRecord, expected_version: int

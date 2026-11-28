@@ -190,7 +190,8 @@ if [[ $WITH_AGENTS -eq 1 ]]; then
   else
     warn "no restricted app login yet; the coordinator will start without a database"
   fi
-  export CODE_HOST=local AGENT_SANDBOX=docker AGENT_REMOTE_PATH="$remote"
+  # CODE_HOST=github (docs/features/github-prs.md) comes from local.env; local is the default.
+  export CODE_HOST="${CODE_HOST:-local}" AGENT_SANDBOX=docker AGENT_REMOTE_PATH="$remote"
   export AGENT_EGRESS_PROXY="http://egress-proxy:3128" AGENT_SANDBOX_NETWORK="jobradar_sandbox"
   export AGENT_LLM_BASE_URL="http://llm-proxy:8080" AGENT_SANDBOX_IMAGE="jobradar-sandbox-writer:dev"
   export AGENT_SANDBOX_RUN="$JR_ROOT/sandbox/run.sh"

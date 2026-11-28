@@ -40,6 +40,13 @@ request_help, submit_triage). ``submit_triage`` writes ``--triage-out`` (``/out/
 handoff is posted. The model defaults per mode (``DEFAULT_MODELS``: triage runs on Sonnet);
 ``AGENT_MODEL_<MODE>`` (e.g. ``AGENT_MODEL_TRIAGE``) then ``AGENT_MODEL`` override it.
 
+Review runs (``--mode review``, AGENT_MODE=review; the read-only reviewer of a published
+branch): the review instructions, plan mode's read-only tools (``git diff <base>..HEAD``
+included) and the review coordinator tools (get_task, post_step, request_help,
+submit_review). ``submit_review`` writes ``--review-out`` (``/out/review.json``); every
+finding's path must be one of ``--changed-files`` (``git diff --name-only -z <base>..HEAD``,
+written by the entrypoint). No handoff is posted. The model defaults to Opus.
+
 Dev runs get ``--base-files`` (``git ls-files -z`` at the base commit, written by the
 entrypoint): Edit/Write on those existing test files needs a ``modify-tests:`` label on the
 card, read from ``get_task``.
@@ -68,8 +75,20 @@ import coordinator_client
 import llm_usage
 import run_log
 
-DEFAULT_MODEL = "claude-opus-5-5"
-DEFAULT_MODELS = {"dev": DEFAULT_MODEL, "plan": DEFAULT_MODEL, "triage": "claude-sonnet-5-5"}
+# Writer and reviewer on Sonnet, the planner on Opus, triage on Sonnet (the human's choice).
+DEFAULT_MODEL = "claude-sonnet-5-5"
+DEFAULT_MODELS = {
+    "dev": DEFAULT_MODEL,
+    "plan": "claude-opus-5-5",
+    "triage": "claude-sonnet-5-5",
+    "review": "claude-sonnet-5-5",
+}
+# The tool that ends each read-only run, and what the board says once it was accepted.
+FINAL_TOOLS = {"plan": "submit_plan", "triage": "submit_triage", "review": "submit_review"}
+SUBMITTED = {"plan": "Plan submitted", "triage": "Triage submitted", "review": "Review submitted"}
+# Run modes (AGENT_MODE / --mode) and the prompt each one uses.
+RUN_MODES = ("dev", "plan", "triage", "review")
+PROMPT_MODES = {"review": "reviewer"}
 SMALL_MODEL = "claude-haiku-5-5"
 CLI_PATH = "/usr/local/bin/claude"
 EXIT_CONFIG = 3
@@ -95,6 +114,8 @@ class Settings:
     plan_out: Path | None = None
     base_files: Path | None = None
     triage_out: Path | None = None
+    review_out: Path | None = None
+    changed_files: Path | None = None
 
     @property
     def is_plan(self) -> bool:
@@ -105,9 +126,18 @@ class Settings:
         return self.mode == "triage"
 
     @property
+    def is_review(self) -> bool:
+        return self.mode == "review"
+
+    @property
+    def prompt_mode(self) -> str:
+        """The ``agent_prompt`` mode: the reviewer's prompt is named after its role."""
+        return PROMPT_MODES.get(self.mode, self.mode)
+
+    @property
     def is_read_only(self) -> bool:
-        """Plan and triage runs: no edits, no leases, no handoff on the coordinator."""
-        return self.is_plan or self.is_triage
+        """Plan, triage and review runs: no edits, no leases, no handoff on the coordinator."""
+        return self.is_plan or self.is_triage or self.is_review
 
 
 class SettingsError(Exception):
@@ -133,15 +163,21 @@ def load_settings(env: Mapping[str, str], argv: list[str] | None = None) -> Sett
     parser.add_argument("--base-dir", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--log-dir", type=Path, help="agent.log + steps.jsonl (default: --out dir)")
-    parser.add_argument("--mode", choices=agent_prompt.MODES, default="dev")
+    parser.add_argument("--mode", choices=RUN_MODES, default="dev")
     parser.add_argument("--plan-out", type=Path, help="plan mode: where submit_plan writes")
     parser.add_argument("--triage-out", type=Path, help="triage mode: where submit_triage writes")
     parser.add_argument("--base-files", type=Path, help="git ls-files -z at the base")
+    parser.add_argument("--review-out", type=Path, help="review mode: where submit_review writes")
+    parser.add_argument(
+        "--changed-files", type=Path, help="review mode: git diff --name-only -z base..HEAD"
+    )
     args = parser.parse_args(argv)
     if args.mode == "plan" and args.plan_out is None:
         raise SettingsError("--mode plan needs --plan-out")
     if args.mode == "triage" and args.triage_out is None:
         raise SettingsError("--mode triage needs --triage-out")
+    if args.mode == "review" and (args.review_out is None or args.changed_files is None):
+        raise SettingsError("--mode review needs --review-out and --changed-files")
     missing = [
         n
         for n in ("TASK_ID", "COORDINATOR_URL", "COORDINATOR_TOKEN", "ANTHROPIC_BASE_URL")
@@ -168,6 +204,8 @@ def load_settings(env: Mapping[str, str], argv: list[str] | None = None) -> Sett
         plan_out=args.plan_out,
         base_files=args.base_files,
         triage_out=args.triage_out,
+        review_out=args.review_out,
+        changed_files=args.changed_files,
     )
 
 
@@ -251,6 +289,7 @@ def check_tool(
         tracker.leases,
         plan=tracker.plan_mode,
         triage=tracker.triage_mode,
+        review=tracker.review_mode,
         existing_tests=tracker.existing_tests,
         modify_tests=tracker.modify_tests,
     )
@@ -342,7 +381,7 @@ def begin(
     except coordinator_client.CoordinatorError as exc:
         raise CoordinatorUnreachableError(coordinator_status(exc)) from None
     user_turn = agent_prompt.build_user_turn(
-        task, settings.task_id, settings.run_id, mode=settings.mode
+        task, settings.task_id, settings.run_id, mode=settings.prompt_mode
     )
     tracker.modify_tests = agent_policy.parse_modify_tests(task_labels(task))
     if settings.is_triage:
@@ -441,11 +480,8 @@ def stop_detail(
         return f"Stopped: wall-clock limit{limit} reached {after}."
     if stop == "end_turn":
         if handoff_posted:
-            done = {"plan": "Plan submitted", "triage": "Triage submitted"}
-            return f"{done.get(settings.mode, 'Agent finished')} {after}."
-        final = {"plan": "submit_plan", "triage": "submit_triage"}.get(
-            settings.mode, "post_handoff"
-        )
+            return f"{SUBMITTED.get(settings.mode, 'Agent finished')} {after}."
+        final = FINAL_TOOLS.get(settings.mode, "post_handoff")
         return f"Stopped: the agent ended without {final} {after}."
     cause = f" ({error})" if error else ""
     return f"Stopped: the agent loop failed{cause} {after}."
@@ -478,7 +514,9 @@ def finish(
     handoff.json)."""
     stop = classify_stop(outcome, spend)
     turns = outcome.turns or log.turns
-    if settings.is_read_only:
+    if settings.is_review:
+        done = tracker.review_submitted
+    elif settings.is_read_only:
         done = tracker.triage_submitted if settings.is_triage else tracker.plan_submitted
     else:
         done = tracker.handoff is not None
@@ -525,6 +563,7 @@ def main(argv: list[str] | None = None) -> int:
         token_budget=settings.token_budget,
         plan_mode=settings.is_plan,
         triage_mode=settings.is_triage,
+        review_mode=settings.is_review,
     )
     log = run_log.RunLog(settings.log_dir)
     spend_client = llm_usage.UsageClient(
@@ -532,9 +571,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         system_prompt = agent_prompt.build_system_prompt(
-            agent_prompt.read_base_files(settings.base_dir), mode=settings.mode
+            agent_prompt.read_base_files(settings.base_dir), mode=settings.prompt_mode
         )
-        if settings.base_files is not None and not settings.is_plan:
+        if settings.base_files is not None and not (settings.is_plan or settings.is_review):
             tracker.existing_tests = existing_test_files(settings.base_files)
         client = coordinator_client.CoordinatorClient(
             settings.coordinator_url, settings.coordinator_token

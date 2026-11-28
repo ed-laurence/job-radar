@@ -5,6 +5,11 @@ row-level security, SEC-03) and the run, which must be one of the task's active 
 takes a task or run id, so none can reach another task.
 
 Results are plain JSON values; `app.coordinator.server` redacts and caps them.
+
+Review runs (the sandboxed reviewer) are read-only and see an isolated task page
+(`task_pages.review_header`): never the writer's steps or handoff. The dev run's test counts
+come from its outcome, which the runner builds from the sandbox's own test re-run. Rework dev
+runs (the card has a branch and the latest review asked for changes) get `review_blockers`.
 """
 
 from __future__ import annotations
@@ -30,12 +35,17 @@ from app.domain.devboard.model import (
     Column,
     LeaseKind,
     NewStep,
+    PlanRecord,
+    ReviewFinding,
+    ReviewVerdict,
     RunKind,
     RunRecord,
+    RunStatus,
     StepKind,
     TaskRecord,
 )
 from app.domain.devboard.paths import overlaps
+from app.domain.devboard.publisher import DevRunSummary, parse_dev_run_outcome
 from app.domain.devboard.runs import RunService
 from app.domain.errors import Forbidden, ValidationFailed
 from app.domain.ports import Clock
@@ -44,8 +54,11 @@ from app.domain.ports.devboard import LeaseOutcome, RunStore, TaskStore, TextRed
 type Sleep = Callable[[float], Awaitable[None]]
 
 POLL_SECONDS = 1.0
-# Runs that only read the repo (the sandboxed triager and dev-lead planner): no leases, ever.
-READ_ONLY_RUN_KINDS = frozenset({RunKind.TRIAGE, RunKind.PLAN})
+# Runs that only read the repo (the sandboxed triager, dev-lead planner and reviewer): no
+# leases, ever.
+READ_ONLY_RUN_KINDS = frozenset({RunKind.TRIAGE, RunKind.PLAN, RunKind.REVIEW})
+# How far back a review run looks for the dev run that published the card's branch.
+DEV_RUN_LOOKBACK = 50
 # Triage runs see the other open cards (for the duplicate check), at most this many.
 MAX_OPEN_CARDS = 50
 OPEN_CARD_COLUMNS = tuple(column for column in Column if column is not Column.DONE)
@@ -118,8 +131,10 @@ class CoordinatorService:
     # ------------------------------------------------------------ get_task
     async def get_task(self, scope: Scope, cursor: int) -> dict[str, Json]:
         owner = scope.actor.user_id
-        triage = await self._stores.tasks.latest_triage(owner, scope.task.id)
         plan = await self._stores.tasks.latest_plan(owner, scope.task.id)
+        if scope.run.kind is RunKind.REVIEW:
+            return await self._review_page(scope, plan, cursor)
+        triage = await self._stores.tasks.latest_triage(owner, scope.task.id)
         held = [
             lease
             for lease in await self._services.leases.active(scope.actor)
@@ -128,9 +143,44 @@ class CoordinatorService:
         cards = await self._open_cards(scope) if scope.run.kind is RunKind.TRIAGE else []
         header = pages.header(scope.task, scope.run, plan, triage)
         items = pages.items(scope.task, scope.run, (triage, plan), held, cards)
-        if cursor > len(items):
-            raise ValidationFailed("cursor is past the last page.")
-        return pages.page(header, items, cursor)
+        if scope.run.kind is not RunKind.DEV:
+            return pages.page(header, items, cursor)
+        items = pages.with_blockers(items, "review_blockers", await self._rework_blockers(scope))
+        return pages.page(header, items, cursor, pages.DEV_LISTS)
+
+    async def _review_page(
+        self, scope: Scope, plan: PlanRecord | None, cursor: int
+    ) -> dict[str, Json]:
+        latest = await self._stores.tasks.latest_review(scope.actor.user_id, scope.task.id)
+        previous = () if latest is None else latest.blockers
+        header = pages.review_header(scope.task, scope.run, await self._dev_summary(scope))
+        items = pages.review_items(scope.task, plan, previous)
+        return pages.page(header, items, cursor, pages.REVIEW_LISTS)
+
+    async def _dev_summary(self, scope: Scope) -> DevRunSummary | None:
+        """The counts of the succeeded dev run that published the card's branch."""
+        branch = scope.task.branch
+        if branch is None:
+            return None
+        runs = await self._stores.runs.for_task(
+            scope.actor.user_id, scope.task.id, 0, DEV_RUN_LOOKBACK
+        )
+        for run in runs:
+            if run.kind is not RunKind.DEV or run.status is not RunStatus.SUCCEEDED:
+                continue
+            summary = parse_dev_run_outcome(run.outcome)
+            if summary is not None and summary.branch == branch:
+                return summary
+        return None
+
+    async def _rework_blockers(self, scope: Scope) -> tuple[ReviewFinding, ...]:
+        """The latest review's blockers, when the card has a branch to rework."""
+        if scope.task.branch is None:
+            return ()
+        latest = await self._stores.tasks.latest_review(scope.actor.user_id, scope.task.id)
+        if latest is None or latest.verdict is ReviewVerdict.APPROVED:
+            return ()
+        return latest.blockers
 
     async def _open_cards(self, scope: Scope) -> list[TaskRecord]:
         """Other live cards not yet done, in board order (one extra to drop the run's own)."""

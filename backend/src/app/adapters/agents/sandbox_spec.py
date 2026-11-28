@@ -61,6 +61,10 @@ class SandboxConfig:
     triage_budget_usd: float = 0.5
     triage_timeout_s: int = 300
     triage_model: str = "claude-sonnet-5-5"
+    # Review runs (the read-only reviewer): budget, wall clock and model.
+    review_budget_usd: float = 1.0
+    review_timeout_s: int = 600
+    review_model: str = "claude-sonnet-5-5"
     docker: str = "docker"
     poll_s: float = 1.0
     work_root: Path | None = None

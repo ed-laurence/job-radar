@@ -77,6 +77,20 @@ export function resolveDrop(
   return rank ? { toColumn: over.column, rank } : null;
 }
 
+/**
+ * A rank at the end of `column`, for moves made outside the board (the detail page). Falls back
+ * to `fallback` when the board isn't loaded or no key fits; the server may rebalance.
+ */
+export function rankAtEnd(
+  tasks: readonly Task[] | undefined,
+  column: TaskColumn,
+  fallback: string,
+): string {
+  if (!tasks) return fallback;
+  const last = groupByColumn(tasks)[column].at(-1);
+  return rankBetween(last?.rank ?? null, null) ?? fallback;
+}
+
 export function applyMove(
   tasks: readonly Task[],
   id: string,

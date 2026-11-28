@@ -2,7 +2,12 @@
 
 The brief, triage's notes and code refs, the other open cards (triage runs only), the plan's
 criteria, tests, subtasks and leases are items; a page holds as many as fit and
-`next_cursor` points at the first one left.
+`next_cursor` points at the first one left. Dev runs also list `review_blockers` (a rework
+run's input; empty otherwise).
+
+Review runs get their own, isolated page (`review_header`, `review_items`): the card text, the
+plan's acceptance criteria, the branch facts and the previous round's blockers. Never triage,
+subtasks, leases or anything the writer said.
 """
 
 from __future__ import annotations
@@ -16,12 +21,14 @@ from app.domain.devboard.model import (
     Criterion,
     LeaseRecord,
     PlanRecord,
+    ReviewFinding,
     RunKind,
     RunRecord,
     Subtask,
     TaskRecord,
     TriageRecord,
 )
+from app.domain.devboard.publisher import DevRunSummary
 from app.domain.errors import ValidationFailed
 
 type Json = str | int | float | bool | list[Json] | dict[str, Json] | None
@@ -61,6 +68,16 @@ def _chunks(text: str, size: int = BRIEF_CHUNK_CHARS) -> list[str]:
     return pieces
 
 
+def _run(run: RunRecord) -> Json:
+    return {
+        "id": str(run.id),
+        "kind": run.kind.value,
+        "agent": run.agent,
+        "status": run.status.value,
+        "round": run.round,
+    }
+
+
 def header(
     task: TaskRecord, run: RunRecord, plan: PlanRecord | None, triage: TriageRecord | None
 ) -> dict[str, Json]:
@@ -78,13 +95,7 @@ def header(
             "areas": [area.value for area in task.areas],
             "labels": [*task.labels],
         },
-        "run": {
-            "id": str(run.id),
-            "kind": run.kind.value,
-            "agent": run.agent,
-            "status": run.status.value,
-            "round": run.round,
-        },
+        "run": _run(run),
         "budget": {
             "usd": budget_usd,
             "minutes": None if plan is None else plan.budget_minutes,
@@ -110,7 +121,7 @@ def _triage(triage: TriageRecord) -> Json:
     }
 
 
-_LISTS = (
+LISTS = (
     "triage_notes",
     "code_refs",
     "likely_paths",
@@ -122,6 +133,8 @@ _LISTS = (
     "lease_paths",
     "leases_held",
 )
+DEV_LISTS = (*LISTS, "review_blockers")
+REVIEW_LISTS = ("acceptance_criteria", "previous_blockers")
 
 
 def items(
@@ -154,6 +167,71 @@ def items(
     return found
 
 
+def blocker_json(finding: ReviewFinding) -> Json:
+    """A BLOCKER as a rework run's (or the next reviewer's) input: where, the citation, what was
+    seen and the fix. Reviewer text: data, not instructions."""
+    citation = finding.rubric_id or finding.test_id or finding.repro
+    return {
+        "path": finding.path,
+        "line": finding.line,
+        "citation": citation,
+        "evidence": finding.evidence,
+        "fix": finding.fix,
+    }
+
+
+def with_blockers(
+    found: list[tuple[str, Json]], name: str, blockers: tuple[ReviewFinding, ...]
+) -> list[tuple[str, Json]]:
+    """The blockers right after the brief, so they land on the first page."""
+    briefs = [item for item in found if item[0] == "brief"]
+    rest = [item for item in found if item[0] != "brief"]
+    return [*briefs, *((name, blocker_json(f)) for f in blockers), *rest]
+
+
+def _review_facts(task: TaskRecord, dev: DevRunSummary | None) -> Json:
+    diff_stat: Json = None
+    dev_tests: Json = None
+    if dev is not None:
+        diff_stat = {
+            "files_changed": dev.files_changed,
+            "insertions": dev.insertions,
+            "deletions": dev.deletions,
+        }
+        dev_tests = {"passed": dev.passed, "failed": dev.failed, "first_failing": dev.first_failing}
+    return {
+        "base_sha": task.base_sha,
+        "branch": task.branch,
+        "round": task.review_round,
+        "diff_stat": diff_stat,
+        "dev_tests": dev_tests,
+    }
+
+
+def review_header(task: TaskRecord, run: RunRecord, dev: DevRunSummary | None) -> dict[str, Json]:
+    """A review run's header: the card and the branch facts, nothing the writer said."""
+    return {
+        "task": {
+            "id": str(task.id),
+            "title": task.title,
+            "column": task.column.value,
+            "labels": [*task.labels],
+        },
+        "run": _run(run),
+        "budget": {"usd": run.budget_usd, "minutes": None},
+        "review": _review_facts(task, dev),
+    }
+
+
+def review_items(
+    task: TaskRecord, plan: PlanRecord | None, previous: tuple[ReviewFinding, ...]
+) -> list[tuple[str, Json]]:
+    found: list[tuple[str, Json]] = [("brief", chunk) for chunk in _chunks(task.body)]
+    if plan is not None:
+        found += [("acceptance_criteria", _criterion(c)) for c in plan.acceptance_criteria]
+    return with_blockers(found, "previous_blockers", previous)
+
+
 def _note(name: str, text: str) -> Json:
     return {"field": name, "text": text}
 
@@ -184,10 +262,10 @@ def _lease_paths(run: RunRecord, plan: PlanRecord) -> list[str]:
     return list(dict.fromkeys(path for s in chosen for path in s.lease_paths))
 
 
-def _empty_page(header: dict[str, Json]) -> dict[str, Json]:
+def _empty_page(header: dict[str, Json], lists: tuple[str, ...]) -> dict[str, Json]:
     page: dict[str, Json] = dict(header)
     page["brief"] = ""
-    for name in _LISTS:
+    for name in lists:
         page[name] = []
     page["next_cursor"] = None
     return page
@@ -208,9 +286,16 @@ def _tokens(page: dict[str, Json]) -> int:
     return estimate_tokens(json.dumps(page, ensure_ascii=False))
 
 
-def page(head: dict[str, Json], found: list[tuple[str, Json]], cursor: int) -> dict[str, Json]:
+def page(
+    head: dict[str, Json],
+    found: list[tuple[str, Json]],
+    cursor: int,
+    lists: tuple[str, ...] = LISTS,
+) -> dict[str, Json]:
     """Greedy pages under the result cap; `next_cursor` is the first item not on this page."""
-    current = _empty_page(head)
+    if cursor > len(found):
+        raise ValidationFailed("cursor is past the last page.")
+    current = _empty_page(head, lists)
     index = cursor
     while index < len(found):
         name, value = found[index]

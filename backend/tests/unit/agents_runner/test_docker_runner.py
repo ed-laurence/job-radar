@@ -152,7 +152,7 @@ async def test_env_points_at_the_proxies_and_carries_ids_and_budgets() -> None:
     assert argv[argv.index("--network") + 1] == "jobradar_sandbox"
 
 
-async def test_llm_proxy_token_is_task_scoped_and_expires_with_the_run() -> None:
+async def test_llm_proxy_token_is_run_scoped_and_expires_with_the_run() -> None:
     harness = Harness(timeout_s=600)
     await harness.runner.run(context(plan_record=plan(minutes=30)), FakeTools())
     token = harness.processes.env["ANTHROPIC_AUTH_TOKEN"]
@@ -161,7 +161,10 @@ async def test_llm_proxy_token_is_task_scoped_and_expires_with_the_run() -> None
     assert prefix == "jrt2"
     assert hmac.compare_digest(_b64d(signature), expected)
     claims = json.loads(_b64d(payload))
-    assert claims["t"] == str(TASK_ID)
+    # llm-proxy keeps spend per token key: one key per run, so an earlier run of the same card
+    # (triage, plan, dev) never eats this run's budget. Regression: a review run started with the
+    # dev run's $1.20 already counted against its $1.00 and stopped before calling the model.
+    assert claims["t"] == f"{TASK_ID.hex[:8]}.{RUN_ID}"
     # Valid a little past the wall clock, so the spend can still be read after a kill.
     assert claims["exp"] == int(WALL) + 600 + USAGE_GRACE_S
     assert claims["usd_micro"] == 2_000_000

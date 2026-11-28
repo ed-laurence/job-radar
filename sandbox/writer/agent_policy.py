@@ -18,6 +18,10 @@ Decides which tool calls the agent may make inside the sandbox:
   file>[::node]...`` and ``cd web && pnpm vitest run [-t <name>] <*.test.ts(x)>...``, where
   every file is a test tracked at the base commit (``existing_tests``). Options are an
   allowlist (no plugins, config overrides or output files); a whole-suite run is refused.
+- Review mode (``review=True``, the read-only reviewer of a published branch): plan mode's
+  tools and read-only git (``git diff <base>..HEAD``, ``git diff --stat``, ``git log``,
+  ``git show``...), no Edit/Write, no leases, and only the review coordinator tools
+  (get_task, post_step, request_help, submit_review).
 - ``RunTracker``: counts tokens the way llm-proxy does; the coordinator tools record granted
   leases, steps and the final ``post_handoff`` (or ``submit_plan``) in it.
 
@@ -40,6 +44,7 @@ BASE_TOOLS = (*FILE_READ_TOOLS, *FILE_WRITE_TOOLS, "Bash")
 PLAN_TOOLS = (*FILE_READ_TOOLS, "Bash")
 PLAN_COORDINATOR_TOOLS = ("get_task", "post_step", "request_help", "submit_plan")
 TRIAGE_COORDINATOR_TOOLS = ("get_task", "post_step", "request_help", "submit_triage")
+REVIEW_COORDINATOR_TOOLS = ("get_task", "post_step", "request_help", "submit_review")
 COORDINATOR_TOOLS = (
     "get_task",
     "claim_paths",
@@ -507,13 +512,16 @@ def tool_allowed(
     *,
     plan: bool = False,
     triage: bool = False,
+    review: bool = False,
     existing_tests: frozenset[str] = frozenset(),
     modify_tests: Sequence[str] = (),
 ) -> Decision:
     """The single entry point used by the runner's ``can_use_tool`` callback."""
     if tool.startswith(MCP_PREFIX):
         name = tool[len(MCP_PREFIX) :]
-        if triage:
+        if review:
+            allowed = REVIEW_COORDINATOR_TOOLS
+        elif triage:
             allowed = TRIAGE_COORDINATOR_TOOLS
         else:
             allowed = PLAN_COORDINATOR_TOOLS if plan else COORDINATOR_TOOLS
@@ -522,9 +530,11 @@ def tool_allowed(
         command = _str(tool_input.get("command"))
         if triage:
             return triage_bash_allowed(command, existing_tests=existing_tests)
-        if plan:
+        if plan or review:
             return plan_bash_allowed(command)
         return bash_allowed(command, gen_api=matches_any(API_SPEC, leases))
+    if review and tool in FILE_WRITE_TOOLS:
+        return deny(f"{tool}: review is read-only; report what you found in submit_review")
     if triage and tool in FILE_WRITE_TOOLS:
         return deny(f"{tool}: triage is read-only; report what you found in submit_triage")
     if plan and tool in FILE_WRITE_TOOLS:
@@ -562,6 +572,8 @@ class RunTracker:
     plan_submitted: bool = False
     triage_mode: bool = False
     triage_submitted: bool = False
+    review_mode: bool = False
+    review_submitted: bool = False
     # The open cards' ids from get_task (triage runs): the only valid duplicate_of values.
     open_cards: frozenset[str] = frozenset()
     modify_tests: tuple[str, ...] = ()
@@ -605,4 +617,5 @@ class RunTracker:
             "help_requested": self.help_requested,
             "plan_submitted": self.plan_submitted,
             "triage_submitted": self.triage_submitted,
+            "review_submitted": self.review_submitted,
         }

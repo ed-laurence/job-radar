@@ -8,6 +8,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Protocol
 
 from app.domain.devboard.model import (
@@ -20,6 +21,8 @@ from app.domain.devboard.model import (
     NewStep,
     PlanRecord,
     Priority,
+    ReviewFinding,
+    ReviewRecord,
     Risk,
     Route,
     RunRecord,
@@ -85,6 +88,12 @@ class TaskStore(Protocol):
     async def add_plan(self, user_id: uuid.UUID, plan: PlanRecord) -> None: ...
 
     async def latest_plan(self, user_id: uuid.UUID, task_id: uuid.UUID) -> PlanRecord | None: ...
+
+    async def add_review(self, user_id: uuid.UUID, review: ReviewRecord) -> None: ...
+
+    async def latest_review(
+        self, user_id: uuid.UUID, task_id: uuid.UUID
+    ) -> ReviewRecord | None: ...
 
     async def save_plan(
         self, user_id: uuid.UUID, plan: PlanRecord, expected_version: int
@@ -217,6 +226,8 @@ class RunContext:
     plan: PlanRecord | None
     triage: TriageRecord | None
     open_cards: tuple[CardRef, ...] = ()
+    # Review runs and rework dev runs: the latest review (its blockers are the rework's input).
+    review: ReviewRecord | None = None
 
 
 class RepoFiles(Protocol):
@@ -284,6 +295,14 @@ class PlanDraft:
 
 
 @dataclass(frozen=True)
+class ReviewDraft:
+    """The reviewer's answer before code's rules (citations, de-duplication, verdict)."""
+
+    summary: str
+    findings: tuple[ReviewFinding, ...]
+
+
+@dataclass(frozen=True)
 class AgentResult:
     is_success: bool
     outcome: str
@@ -291,6 +310,10 @@ class AgentResult:
     model: str | None = None
     provider: str | None = None
     plan: PlanDraft | None = None
+    # Dev runs: the published branch and its base. Review runs: the review.
+    branch: str | None = None
+    base_sha: str | None = None
+    review: ReviewDraft | None = None
 
 
 class AgentRunner(Protocol):
@@ -298,3 +321,80 @@ class AgentRunner(Protocol):
     arrives in M2 behind the same port."""
 
     async def run(self, context: RunContext, tools: RunTools) -> AgentResult: ...
+
+
+# ---------------------------------------------------------------- Publisher + branch views
+@dataclass(frozen=True)
+class FileChange:
+    """One file in a branch's diff. `status` is git's letter: A, M, D or R (renames carry the
+    old path)."""
+
+    path: str
+    status: str
+    added: int
+    deleted: int
+    old_path: str | None = None
+
+
+@dataclass(frozen=True)
+class ChangeSet:
+    """What the Publisher checks: the changed files and every added line as (path, text)."""
+
+    files: tuple[FileChange, ...]
+    added_lines: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class BranchDiff:
+    branch: str
+    base_sha: str
+    files_changed: int
+    insertions: int
+    deletions: int
+    text: str
+
+
+class BranchViews(Protocol):
+    """Read-only views of a published agent branch for human review."""
+
+    async def diff(self, base_sha: str, branch: str) -> BranchDiff:
+        """Raises `NotFound` when the branch doesn't exist."""
+        ...
+
+    async def patch(self, base_sha: str, branch: str) -> str:
+        """`git format-patch` output for base..branch. Raises `NotFound`."""
+        ...
+
+
+class RubricIds(Protocol):
+    """The rubric ids in `docs/standards/review-rubric.yaml` (a BLOCKER must cite one, or a test
+    or a repro)."""
+
+    def ids(self) -> frozenset[str]: ...
+
+
+# ---------------------------------------------------------------- GitHub pull requests
+class PullRequestState(StrEnum):
+    OPEN = "open"
+    CLOSED = "closed"
+    MERGED = "merged"
+
+
+@dataclass(frozen=True)
+class PullRequest:
+    url: str
+    number: int
+    state: PullRequestState
+
+
+class PullRequests(Protocol):
+    """Read-only view of the PRs opened for agent branches (docs/features/github-prs.md)."""
+
+    async def find(self, branch: str) -> PullRequest | None:
+        """The newest PR whose head is `branch`, or None. Raises `UpstreamUnavailable`."""
+        ...
+
+
+def github_branch(task_id: uuid.UUID) -> str:
+    """One GitHub branch per card; rework pushes fast-forward onto it, so the PR updates."""
+    return f"agent/task-{task_id}"

@@ -11,10 +11,12 @@ from app.api.security import maintainer, rate_limited_user
 from app.domain.devboard.board import BoardService
 from app.domain.devboard.model import Actor
 from app.domain.devboard.plans import PlanService
+from app.domain.devboard.reviews import ReviewService
 from app.domain.devboard.runs import RunService
 from app.domain.devboard.task_chat import TaskChatService
 from app.domain.devboard.task_chat_decisions import ProposalDecisions
 from app.domain.devboard.workflow import Workflow
+from app.domain.errors import NotFound
 from app.domain.identity import Principal
 from app.domain.rate_limits import RateTier
 
@@ -32,6 +34,8 @@ class DevboardServices:
     redactor: StepRedactor
     chat: TaskChatService
     proposals: ProposalDecisions
+    # Human review reads. `None` until the runtime wires a code host (BranchViews).
+    reviews: ReviewService | None = None
 
 
 def devboard(request: Request) -> DevboardServices:
@@ -41,6 +45,15 @@ def devboard(request: Request) -> DevboardServices:
 
 
 Services = Annotated[DevboardServices, Depends(devboard)]
+
+
+def reviews(services: Services) -> ReviewService:
+    if services.reviews is None:
+        raise NotFound("Reviews aren't available on this server.")
+    return services.reviews
+
+
+Reviews = Annotated[ReviewService, Depends(reviews)]
 DefaultUser = Annotated[Principal, Depends(rate_limited_user(RateTier.DEFAULT))]
 AiUser = Annotated[Principal, Depends(rate_limited_user(RateTier.AI))]
 StreamUser = Annotated[Principal, Depends(rate_limited_user(RateTier.STREAM))]

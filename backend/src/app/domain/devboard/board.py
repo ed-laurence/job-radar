@@ -58,7 +58,11 @@ class BoardHooks(Protocol):
 
     async def on_text_changed(self, actor: Actor, task: TaskRecord) -> None: ...
 
-    async def on_moved(self, actor: Actor, task: TaskRecord, from_column: Column) -> None: ...
+    async def on_moved(
+        self, actor: Actor, task: TaskRecord, from_column: Column, *, reason: str | None = None
+    ) -> None:
+        """After a user move. `reason` is the mover's note (a block, or review notes)."""
+        ...
 
 
 def encode_cursor(offset: int) -> str:
@@ -130,6 +134,12 @@ class BoardService:
         rows = await self._store.events(actor.user_id, task_id, offset, limit + 1)
         more = len(rows) > limit
         return Page(items=rows[:limit], next_cursor=encode_cursor(offset + limit) if more else None)
+
+    async def without_pii(self, text: str) -> str:
+        """Untrusted text (like a human's review notes) with PII replaced, as card text is
+        before it is saved (SEC-05)."""
+        clean, _ = await redact_pii(self._pii, text)
+        return clean
 
     # ------------------------------------------------------------ writes
     async def create(
@@ -212,7 +222,7 @@ class BoardService:
             return saved
         await self._event(actor, saved, EventKind.MOVED, from_column=task.column)
         if self._hooks is not None:
-            await self._hooks.on_moved(actor, saved, task.column)
+            await self._hooks.on_moved(actor, saved, task.column, reason=move.reason)
         return await self.get(actor, task_id)
 
     async def system_move(
@@ -241,6 +251,22 @@ class BoardService:
             moved = change(moved)
         saved = await self._store.save(actor.user_id, moved, task.version)
         await self._event(actor, saved, EventKind.MOVED, from_column=task.column, run_id=run_id)
+        return saved
+
+    async def system_edit(
+        self, actor: Actor, task_id: uuid.UUID, change: Callable[[TaskRecord], TaskRecord]
+    ) -> TaskRecord | None:
+        """A system change to the card as it is now (PR sync: `pr_url`, labels), saved against
+        the version just read, with an `edited` event. No hooks run. None when `change` leaves
+        the card as it was. Raises `Conflict` when the card changed meanwhile."""
+        task = await self.get(actor, task_id)
+        changed = change(task)
+        if changed == task:
+            return None
+        saved = await self._store.save(
+            actor.user_id, replace(changed, updated_at=self._clock.now()), task.version
+        )
+        await self._event(actor, saved, EventKind.EDITED)
         return saved
 
     async def return_to_backlog(self, actor: Actor, task_id: uuid.UUID) -> TaskRecord:

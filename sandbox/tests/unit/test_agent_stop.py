@@ -74,7 +74,7 @@ def test_begin_fetches_the_task_then_posts_started(tmp_path: Path) -> None:
     assert [(m, p) for m, p, _ in transport.calls] == [("GET", "/v1/task"), ("POST", "/v1/steps")]
     step = cc.as_object(transport.calls[1][2])
     assert step is not None and step["kind"] == "message"
-    assert str(step["text"]).startswith("Started: model claude-opus")
+    assert str(step["text"]).startswith("Started: model claude-sonnet")
     assert "$2.00" in str(step["text"])
     assert tracker.steps_posted == 1
     assert _lines(tmp_path / "out" / "steps.jsonl")[0]["text"] == step["text"]

@@ -6,6 +6,7 @@ import {
   columnDropId,
   groupByColumn,
   moveErrorMessage,
+  rankAtEnd,
   resolveDrop,
   type Task,
 } from "./model";
@@ -40,6 +41,17 @@ describe("groupByColumn", () => {
     // "B" < "a" in byte order (COLLATE "C"), unlike localeCompare.
     expect(grouped.backlog.map((t) => t.id)).toEqual(["e", "b", "a", "c"]);
     expect(grouped.done).toEqual([]);
+  });
+});
+
+describe("rankAtEnd", () => {
+  it("ranks after the last card of the target column", () => {
+    expect(rankAtEnd(TASKS, "backlog", "z") > "c").toBe(true);
+    expect(rankAtEnd(TASKS, "done", "z")).not.toBe("z");
+  });
+
+  it("falls back when the board isn't loaded", () => {
+    expect(rankAtEnd(undefined, "done", "k")).toBe("k");
   });
 });
 

@@ -107,6 +107,9 @@ def task_record(row: Row[DevTask, str, uuid.UUID]) -> TaskRecord:
         blocked_from=Column(task.blocked_from_column) if task.blocked_from_column else None,
         pii_redacted=task.pii_redacted,
         pr_url=task.pr_url,
+        branch=task.branch,
+        base_sha=task.base_sha,
+        review_round=task.review_round,
         active_run_id=row[2],
     )
 
@@ -131,6 +134,9 @@ def task_values(task: TaskRecord) -> dict[str, object]:
         "out_of_scope_reason": task.out_of_scope_reason,
         "pii_redacted": task.pii_redacted,
         "pr_url": task.pr_url,
+        "branch": task.branch,
+        "base_sha": task.base_sha,
+        "review_round": task.review_round,
         "updated_at": task.updated_at,
     }
 

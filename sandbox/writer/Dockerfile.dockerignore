@@ -20,6 +20,7 @@
 !sandbox/writer/run_log.py
 !sandbox/writer/plan_contract.py
 !sandbox/writer/triage_contract.py
+!sandbox/writer/review_contract.py
 !sandbox/writer/offline-caches.sh
 # Pinned generator versions only (sourced at build time for the gen-api caches).
 !scripts/lib/common.sh

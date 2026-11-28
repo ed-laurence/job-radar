@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 # Writer sandbox entrypoint.
 #
-# In:  /in/input.bundle (git bundle of the base commit; read-only mount)
+# In:  /in/input.bundle (git bundle of the base commit, or of a published branch head for
+#      review and rework runs; read-only mount)
 # Out: /out/result.bundle (branch agent/<TASK_ID>) and /out/handoff.json; in agent mode also
 #      /out/agent.log (one metadata line per model turn) and /out/steps.jsonl (posted steps)
 # Env: TASK_ID (required), TASK_BASE_REF (default HEAD), SANDBOX_POSTGRES=1|0,
-#      SANDBOX_SUITES (default "backend,web"), AGENT_MODE=agent|plan|triage|stub (default agent)
+#      SANDBOX_SUITES (default "backend,web"),
+#      AGENT_MODE=agent|plan|triage|review|stub (default agent)
 #      agent mode also needs: ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, COORDINATOR_URL,
 #      COORDINATOR_TOKEN, RUN_ID; optional AGENT_MODEL, AGENT_MAX_TURNS, AGENT_TOKEN_BUDGET,
 #      AGENT_TIMEOUT_S (wall clock for the agent loop, default 3600)
+#      AGENT_BASE_SHA: the card's base commit when the bundle is a published branch head
+#      (review runs need it; rework dev runs get it). It must be in the bundle and an ancestor
+#      of the head; the prompt pack, the existing-file list and the changed files come from it.
 #
 # AGENT_MODE=agent runs the Claude Agent SDK loop (agent_runner.py): the task comes from the
 # coordinator's get_task, the system prompt from AGENTS.md + docs/standards/ at the base commit.
@@ -21,6 +26,10 @@
 # agent may run EXISTING tests, named one by one, to reproduce; still no Postgres, no suite
 # run, no bundle). It leaves /out/triage.json (submit_triage) and the entrypoint writes
 # /out/handoff.json (done exactly when triage.json is valid).
+# AGENT_MODE=review is the read-only reviewer of a published branch: plan mode's setup at the
+# branch head, plus the files the branch changed (git diff --name-only AGENT_BASE_SHA..HEAD,
+# computed here before the agent starts). It leaves /out/review.json (submit_review) and the
+# entrypoint writes /out/handoff.json (done exactly when review.json is valid).
 # Then the repo tests are re-run here (agent mode: only if the agent changed something;
 # otherwise skipped_checks says "no changes; tests not run"), whatever changed is committed on
 # the branch, and result.bundle + handoff.json are written. Exit 0 when the plumbing worked
@@ -72,6 +81,17 @@ base_sha="$(git rev-parse --verify "${BASE_REF}^{commit}" 2>/dev/null)" || fail_
 git checkout --quiet -B "$BRANCH" "$base_sha"
 log "workspace at $BRANCH ($(git rev-parse --short HEAD))"
 
+# The card's base when the workspace starts at a published branch head (review, rework).
+pack_sha="$base_sha"
+if [[ -n "${AGENT_BASE_SHA:-}" ]]; then
+  [[ "$AGENT_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail_handoff "AGENT_BASE_SHA must be a full commit id"
+  git cat-file -e "${AGENT_BASE_SHA}^{commit}" 2>/dev/null || fail_handoff "AGENT_BASE_SHA is not in the bundle"
+  git merge-base --is-ancestor "$AGENT_BASE_SHA" HEAD 2>/dev/null \
+    || fail_handoff "AGENT_BASE_SHA is not an ancestor of the branch head"
+  pack_sha="$AGENT_BASE_SHA"
+  log "card base $(git rev-parse --short "$pack_sha")"
+fi
+
 # Baked dependencies: link, never install. The link is never committed.
 printf '%s\n' '/web/node_modules' >> .git/info/exclude
 if [[ -d web && ! -e web/node_modules ]]; then ln -s /opt/deps/web/node_modules web/node_modules; fi
@@ -87,7 +107,7 @@ need_agent_env() {
   [[ "$timeout_s" =~ ^[0-9]{2,5}$ ]] || fail_handoff "AGENT_TIMEOUT_S must be 10-99999 seconds"
   # The prompt pack comes from the BASE commit, extracted before the agent can touch anything.
   mkdir -p "$AGENT_DIR/base"
-  git archive --format=tar "$base_sha" -- AGENTS.md docs/standards 2>/dev/null \
+  git archive --format=tar "$pack_sha" -- AGENTS.md docs/standards 2>/dev/null \
     | tar -x -C "$AGENT_DIR/base" 2>/dev/null \
     || fail_handoff "AGENTS.md or docs/standards/ missing at the base commit"
 }
@@ -146,6 +166,27 @@ if [[ "$AGENT_MODE" == triage ]]; then
   exit 0
 fi
 
+# ------------------------------------------------------------ review mode: read-only reviewer
+if [[ "$AGENT_MODE" == review ]]; then
+  need_agent_env
+  [[ -n "${AGENT_BASE_SHA:-}" ]] || fail_handoff "AGENT_MODE=review needs AGENT_BASE_SHA"
+  rm -f "$OUT/review.json" "$OUT/review.json.tmp" "$OUT/result.bundle"
+  # The files the branch changed: the only paths a finding may name.
+  git diff --name-only -z "$pack_sha..HEAD" > "$AGENT_DIR/changed-files" || fail_handoff "git diff failed"
+  log "agent: reviewer, read-only (timeout ${timeout_s}s)"
+  run_agent --mode review --review-out "$OUT/review.json" --changed-files "$AGENT_DIR/changed-files"
+  cd "$WORK"
+  skip_args=()
+  for s in "${SKIPPED[@]+"${SKIPPED[@]}"}"; do skip_args+=(--skipped "$s"); done
+  /usr/local/bin/python3 /opt/sandbox/handoff.py --task-id "$TASK_ID" --review-mode \
+    --review-json "$OUT/review.json" --changed-files "$AGENT_DIR/changed-files" \
+    --agent-result "$AGENT_DIR/result.json" \
+    "${skip_args[@]+"${skip_args[@]}"}" --out "$OUT/handoff.json" || fail_handoff "handoff writer failed"
+  if [[ -f "$OUT/review.json" ]]; then log "wrote /out/review.json and /out/handoff.json"
+  else log "no review written; wrote /out/handoff.json"; fi
+  exit 0
+fi
+
 # ------------------------------------------------------------ 2. Postgres (inside the container)
 PGDATA=/tmp/pgdata PGSOCK=/tmp/pgsock
 pg_stop() { [[ -f "$PGDATA/postmaster.pid" ]] && pg_ctl -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 || true; }
@@ -169,9 +210,9 @@ case "$AGENT_MODE" in
   stub) log "agent: stub (no edits)" ;;
   agent)
     need_agent_env
-    # Existing files at the base commit: the runner refuses edits to existing tests unless
-    # the card's modify-tests: label covers them.
-    git ls-files -z > "$AGENT_DIR/base-files" || fail_handoff "git ls-files failed"
+    # Existing files at the base commit (the card's base for a rework run): the runner refuses
+    # edits to existing tests unless the card's modify-tests: label covers them.
+    git ls-tree -r -z --name-only "$pack_sha" > "$AGENT_DIR/base-files" || fail_handoff "git ls-tree failed"
     # Offline caches for scripts/gen-api.sh (allowed while the run leases api/openapi.yaml).
     /opt/sandbox/offline-caches.sh || fail_handoff "offline generator caches failed"
     log "agent: claude agent sdk (timeout ${timeout_s}s)"
@@ -186,7 +227,7 @@ case "$AGENT_MODE" in
       log "agent: no changes; tests not run"
     fi
     ;;
-  *) fail_handoff "unknown AGENT_MODE (agent|plan|triage|stub)" ;;
+  *) fail_handoff "unknown AGENT_MODE (agent|plan|triage|review|stub)" ;;
 esac
 
 # ------------------------------------------------------------ 4. tests (JSON reports only; logs stay in /tmp)
@@ -223,7 +264,7 @@ git bundle create "$OUT/result.bundle" "$BRANCH" >/dev/null 2>&1 || fail_handoff
 
 skip_args=()
 for s in "${SKIPPED[@]+"${SKIPPED[@]}"}"; do skip_args+=(--skipped "$s"); done
-git diff --name-only "$base_sha..HEAD" > /tmp/changed-paths.txt
+git diff --name-only "$pack_sha..HEAD" > /tmp/changed-paths.txt
 /usr/local/bin/python3 /opt/sandbox/handoff.py --task-id "$TASK_ID" --changed /tmp/changed-paths.txt \
   "${report_args[@]+"${report_args[@]}"}" "${skip_args[@]+"${skip_args[@]}"}" \
   "${agent_args[@]+"${agent_args[@]}"}" --out "$OUT/handoff.json" || fail_handoff "handoff writer failed"

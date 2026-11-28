@@ -1,6 +1,7 @@
 import type { Schemas } from "@/lib/api";
 import styles from "./DevBoard.module.css";
 import type { Task } from "./model";
+import { NEEDS_DECISION_LABEL } from "./review";
 import { ROUTE_LABEL } from "./triageLabels";
 
 export interface TaskBadgesProps {
@@ -61,11 +62,15 @@ function badgeClass(tone: Tone): string {
 /** The card's detail badges. Every badge is text; colour only reinforces it. */
 export function TaskBadges({ task }: TaskBadgesProps) {
   const locked = task.column === "out_of_scope";
-  const labels = task.labels ?? [];
+  const needsDecision = (task.labels ?? []).includes(NEEDS_DECISION_LABEL);
+  // The needs-decision label gets its own pill, so it isn't repeated as a plain label.
+  const labels = (task.labels ?? []).filter((label) => label !== NEEDS_DECISION_LABEL);
+  const reviewRound = task.review_round ?? 0;
   const hiddenLabels = labels.slice(MAX_LABELS);
   return (
     <ul className={styles.badges} aria-label="Details">
       {locked ? <li className={badgeClass("danger")}>Locked</li> : null}
+      {needsDecision ? <li className={badgeClass("danger")}>Needs decision</li> : null}
       {task.priority ? (
         <li className={badgeClass(PRIORITY_TONE[task.priority])}>
           <span className="visually-hidden">Priority </span>
@@ -98,6 +103,9 @@ export function TaskBadges({ task }: TaskBadgesProps) {
             more {hiddenLabels.length === 1 ? "label" : "labels"}
           </span>
         </li>
+      ) : null}
+      {reviewRound > 0 ? (
+        <li className={badgeClass("accent")}>Review round {reviewRound}</li>
       ) : null}
       {task.active_run_id ? <li className={badgeClass("accent")}>Agent running</li> : null}
     </ul>

@@ -833,6 +833,20 @@ class Task(BaseModel):
     priority: TaskPriority | None = None
     severity: TaskSeverity | None = None
     route: TriageRoute | None = None
+    branch: str | None = Field(
+        None,
+        description="The card's latest published agent branch (`agent/<task>-<run>`).",
+        max_length=120,
+    )
+    base_sha: str | None = Field(
+        None, max_length=64, pattern="^[0-9a-f]{40}([0-9a-f]{24})?$"
+    )
+    review_round: int | None = Field(
+        None,
+        description="Review rounds so far. Agent reviews stop after round 2 (`needs_decision`); each human Request changes adds a round.",
+        ge=0,
+        le=20,
+    )
     allowed_columns: list[TaskColumn] | None = Field(
         None,
         description="The columns the caller may move this card to now (its own column excluded), from the server's state machine and the caller's role. A move to `ready` also needs an approved plan.",
@@ -971,6 +985,56 @@ class AcceptanceCriterion(BaseModel):
 
 class LikelyPath(RootModel[str]):
     root: str = Field(..., max_length=300)
+
+
+class Severity(StrEnum):
+    BLOCKER = "BLOCKER"
+    NIT = "NIT"
+
+
+class ReviewFinding(BaseModel):
+    severity: Severity
+    rubric_id: str | None = Field(None, max_length=16, pattern="^[A-Z]{2,5}-\\d{2}$")
+    test_id: str | None = Field(None, max_length=300)
+    repro: str | None = Field(None, max_length=600)
+    path: str = Field(..., max_length=300)
+    line: int | None = Field(None, ge=1)
+    evidence: str = Field(..., max_length=600)
+    fix: str | None = Field(None, max_length=600)
+    downgraded: bool | None = Field(
+        None, description="A BLOCKER without a citation that code downgraded to NIT."
+    )
+
+
+class Verdict(StrEnum):
+    approved = "approved"
+    changes_requested = "changes_requested"
+    needs_decision = "needs_decision"
+
+
+class TaskReview(BaseModel):
+    task_id: UUID
+    run_id: UUID
+    round: int = Field(..., ge=1, le=20)
+    verdict: Verdict
+    summary: str = Field(..., max_length=1000)
+    findings: list[ReviewFinding] = Field(..., max_length=10)
+    model: str | None = Field(None, max_length=100)
+    created_at: AwareDatetime
+
+
+class TaskDiff(BaseModel):
+    branch: str = Field(..., max_length=120)
+    base_sha: str = Field(..., max_length=64)
+    files_changed: int = Field(..., ge=0)
+    insertions: int = Field(..., ge=0)
+    deletions: int = Field(..., ge=0)
+    diff: str = Field(
+        ...,
+        description="Unified diff, redacted. Cut at 400 000 characters (see `truncated`).",
+        max_length=400000,
+    )
+    truncated: bool
 
 
 class TriageRequest(BaseModel):
@@ -2434,7 +2498,7 @@ class Run(BaseModel):
     kind: Kind3
     agent: str | None = Field(None, max_length=64)
     status: RunStatus
-    round: int | None = Field(None, ge=0, le=2)
+    round: int | None = Field(None, ge=0, le=20)
     model: str | None = Field(None, max_length=100)
     provider: LlmProvider | None = None
     outcome: str | None = Field(None, max_length=1000)

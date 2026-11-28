@@ -7,18 +7,21 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, Response, status
+from fastapi.responses import PlainTextResponse
 
 from app.api.devboard import mapping
-from app.api.devboard.deps import AiUser, DefaultUser, Services, actor
+from app.api.devboard.deps import AiUser, DefaultUser, Reviews, Services, actor
 from app.domain.devboard.model import Column, MoveRequest, TaskEdit, TaskQuery
 from app.domain.errors import NotFound
 from app.generated.models import (
     Task,
     TaskColumn,
     TaskCreate,
+    TaskDiff,
     TaskEventPage,
     TaskMove,
     TaskPage,
+    TaskReview,
     TaskUpdate,
     TriageRequest,
     TriageResult,
@@ -30,6 +33,7 @@ TaskId = Annotated[uuid.UUID, Path(alias="taskId")]
 Limit = Annotated[int, Query(ge=1, le=100)]
 Cursor = Annotated[str | None, Query(max_length=512)]
 Version = Annotated[int, Query(ge=1)]
+PATCH_TYPE = "text/x-patch"
 
 
 @router.get(
@@ -157,3 +161,35 @@ async def get_task_triage(
 async def retriage_task(task_id: TaskId, principal: AiUser, services: Services) -> TriageRequest:
     run = await services.workflow.queue_triage(actor(principal), task_id)
     return TriageRequest(queued_at=run.created_at, run_id=run.id)
+
+
+@router.get(
+    "/tasks/{taskId}/review",
+    operation_id="getTaskReview",
+    response_model=TaskReview,
+    response_model_exclude_none=True,
+)
+async def get_task_review(task_id: TaskId, principal: DefaultUser, service: Reviews) -> TaskReview:
+    return mapping.review(await service.latest(actor(principal), task_id))
+
+
+@router.get(
+    "/tasks/{taskId}/diff",
+    operation_id="getTaskDiff",
+    response_model=TaskDiff,
+    response_model_exclude_none=True,
+)
+async def get_task_diff(task_id: TaskId, principal: DefaultUser, service: Reviews) -> TaskDiff:
+    return mapping.diff(await service.diff(actor(principal), task_id))
+
+
+@router.get(
+    "/tasks/{taskId}/patch",
+    operation_id="getTaskPatch",
+    response_class=PlainTextResponse,
+    responses={200: {"content": {PATCH_TYPE: {}}}},
+)
+async def get_task_patch(task_id: TaskId, principal: DefaultUser, service: Reviews) -> Response:
+    text = await service.patch(actor(principal), task_id)
+    disposition = f'attachment; filename="task-{task_id}.patch"'
+    return Response(text, media_type=PATCH_TYPE, headers={"Content-Disposition": disposition})

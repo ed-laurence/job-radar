@@ -474,3 +474,208 @@ describe("TaskDetailPage", () => {
     expect(await screen.findByText("Task not found")).toBeInTheDocument();
   });
 });
+
+/** jsdom's Blob has no `text()`, so read it the old way. */
+function readText(blob: Blob | undefined): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!blob) return reject(new Error("no blob"));
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
+}
+
+describe("TaskDetailPage human review", () => {
+  const BRANCH = "agent/0000b1aa-0000f2bb";
+  const BASE = "0123456789abcdef0123456789abcdef01234567";
+  const diff: Schemas["TaskDiff"] = {
+    branch: BRANCH,
+    base_sha: BASE,
+    files_changed: 1,
+    insertions: 1,
+    deletions: 1,
+    truncated: false,
+    diff: [
+      "diff --git a/web/src/features/contacts/List.tsx b/web/src/features/contacts/List.tsx",
+      "--- a/web/src/features/contacts/List.tsx",
+      "+++ b/web/src/features/contacts/List.tsx",
+      "@@ -1 +1 @@",
+      "-return null;",
+      "+return <Empty />;",
+    ].join("\n"),
+  };
+  const review: Schemas["TaskReview"] = {
+    task_id: TASK_ID,
+    run_id: REVIEWER,
+    round: 1,
+    verdict: "approved",
+    summary: "Small, tested change.",
+    created_at: "2026-11-25T02:00:00Z",
+    findings: [
+      {
+        severity: "NIT",
+        rubric_id: "CODE-40",
+        path: "web/src/features/contacts/List.tsx",
+        line: 1,
+        evidence: "A comment restates the code.",
+        fix: "Remove it.",
+      },
+    ],
+  };
+  let reviewFound: boolean;
+  let moves: Schemas["TaskMove"][];
+
+  beforeEach(() => {
+    reviewFound = true;
+    moves = [];
+    current = task({
+      id: TASK_ID,
+      title: "Add empty state",
+      column: "human_review",
+      version: 9,
+      branch: BRANCH,
+      base_sha: BASE,
+      review_round: 1,
+    });
+    plan = null;
+    server.use(
+      http.get(`${API}/tasks/:id/diff`, () => HttpResponse.json(diff)),
+      http.get(`${API}/tasks/:id/review`, () =>
+        reviewFound ? HttpResponse.json(review) : problemResponse(404, "not-found"),
+      ),
+      http.post(`${API}/tasks/:id/move`, async ({ request }) => {
+        const body = (await request.json()) as Schemas["TaskMove"];
+        moves.push(body);
+        current = { ...current, column: body.to_column, version: current.version + 1 };
+        return HttpResponse.json(current);
+      }),
+    );
+  });
+
+  it("shows the changes and the agent review for a card with a branch", async () => {
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+    const changes = await screen.findByRole("region", { name: "Changes" });
+    expect(await within(changes).findByText("+return <Empty />;")).toBeInTheDocument();
+    expect(within(changes).getByText(BRANCH)).toBeInTheDocument();
+    const reviewSection = screen.getByRole("region", { name: "Agent review" });
+    expect(await within(reviewSection).findByText("Small, tested change.")).toBeInTheDocument();
+    expect(within(reviewSection).getByText("Approved")).toBeInTheDocument();
+  });
+
+  it("shows neither panel for a card without a branch", async () => {
+    current = task({ id: TASK_ID, title: "Add empty state", column: "ready" });
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+    await screen.findByRole("heading", { level: 1, name: "Add empty state" });
+    expect(screen.queryByRole("region", { name: "Changes" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Agent review" })).toBeNull();
+  });
+
+  it("says when there is no agent review yet", async () => {
+    reviewFound = false;
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+    expect(await screen.findByText("No agent review yet.")).toBeInTheDocument();
+  });
+
+  it("shows a banner when the card needs the maintainer's decision", async () => {
+    current = { ...current, labels: ["needs-decision"], review_round: 2 };
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+    expect(await screen.findByText("Needs your decision")).toBeInTheDocument();
+  });
+
+  it("lets a maintainer mark the card done with its version", async () => {
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Mark done" }));
+    await waitFor(() =>
+      expect(moves).toEqual([{ to_column: "done", version: 9, rank: expect.any(String) }]),
+    );
+    expect(await screen.findByText(/The card moved to Done/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mark done" })).toBeNull();
+  });
+
+  it("sends the maintainer's notes as the reason when requesting changes", async () => {
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Request changes" }));
+    await user.type(
+      screen.getByRole("textbox", { name: /Notes for the agent/ }),
+      "Handle the empty list.",
+    );
+    await user.click(screen.getByRole("button", { name: "Send back for changes" }));
+    await waitFor(() =>
+      expect(moves).toEqual([
+        {
+          to_column: "changes_requested",
+          version: 9,
+          rank: expect.any(String),
+          reason: "Handle the empty list.",
+        },
+      ]),
+    );
+    expect(await screen.findByText(/sent back to the agent/i)).toBeInTheDocument();
+  });
+
+  it("shows the problem detail when a review move fails", async () => {
+    server.use(
+      http.post(`${API}/tasks/:id/move`, () =>
+        problemResponse(422, "illegal-transition", { detail: "The branch was deleted." }),
+      ),
+    );
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Mark done" }));
+    expect(await screen.findByText(/The branch was deleted\./)).toBeInTheDocument();
+  });
+
+  it("hides the review actions from a user, who still sees the changes", async () => {
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />, { email: TESTER });
+    const changes = await screen.findByRole("region", { name: "Changes" });
+    await within(changes).findByText(BRANCH);
+    expect(screen.queryByRole("button", { name: "Mark done" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
+  });
+
+  it("hides the review actions outside Human review", async () => {
+    current = { ...current, column: "agent_review" };
+    renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+    await screen.findByRole("region", { name: "Changes" });
+    expect(screen.queryByRole("button", { name: "Mark done" })).toBeNull();
+  });
+
+  it("downloads the patch with the bearer token, named after the branch", async () => {
+    let auth: string | null = null;
+    const blobs: Blob[] = [];
+    const clicked: { href: string; download: string }[] = [];
+    Object.defineProperty(URL, "createObjectURL", {
+      value: vi.fn((blob: Blob) => {
+        blobs.push(blob);
+        return "blob:patch";
+      }),
+      configurable: true,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", { value: vi.fn(), configurable: true });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      clicked.push({ href: this.href, download: this.download });
+    });
+    server.use(
+      http.get(`${API}/tasks/:id/patch`, ({ request }) => {
+        auth = request.headers.get("authorization");
+        return new HttpResponse("From 0123 Mon Sep 17 00:00:00 2001\n", {
+          headers: { "content-type": "text/x-patch" },
+        });
+      }),
+    );
+    try {
+      renderWithApi(<TaskDetailPage taskId={TASK_ID} apiBase={API} />);
+      await userEvent.setup().click(await screen.findByRole("button", { name: "Download patch" }));
+      await waitFor(() => expect(clicked).toHaveLength(1));
+      expect(clicked[0]).toEqual({ href: "blob:patch", download: "agent-0000b1aa-0000f2bb.patch" });
+      expect(auth).toBe(`Bearer fake:${OWNER}`);
+      expect(blobs[0]?.type).toBe("text/x-patch");
+      expect(await readText(blobs[0])).toContain("From 0123");
+    } finally {
+      click.mockRestore();
+    }
+  });
+});

@@ -3128,8 +3128,10 @@ paths:
         | `triaged`, `plan_review`, `ready` | `backlog` | back out |
         | any except `done`, `agent_dev`, `agent_review` | `blocked` | `reason` required |
         | `blocked` | the column it came from, or `backlog` | |
+        | `human_review` | `done` | maintainer; stands in for the merge webhook locally |
+        | `human_review` | `changes_requested` | maintainer; `reason` (the notes) required; starts a rework dev run |
 
-        System-only moves: `backlog`→`triaged`/`out_of_scope` (triage), `agent_dev`→`agent_review`, `agent_review`→`human_review`/`changes_requested`, `changes_requested`→`agent_dev`, `human_review`→`done` (merge webhook). `out_of_scope` can never move to `ready`. A `user` asking for a maintainer move gets 403.
+        System-only moves: `backlog`→`triaged`/`out_of_scope` (triage), `agent_dev`→`agent_review`, `agent_review`→`human_review`/`changes_requested`, `changes_requested`→`agent_dev`, `human_review`→`done` (the merge webhook, once on GitHub). `out_of_scope` can never move to `ready`. A `user` asking for a maintainer move gets 403.
       requestBody:
         required: true
         content:
@@ -3355,6 +3357,115 @@ paths:
           $ref: '#/components/responses/InternalError'
       x-required-role: maintainer
       x-rate-limit-tier: agent
+  /tasks/{taskId}/review:
+    parameters:
+    - $ref: '#/components/parameters/TaskId'
+    get:
+      operationId: getTaskReview
+      tags:
+      - Dev board
+      summary: Latest agent review
+      description: The latest agent review of the card's branch (verdict and findings). 404 when there is none.
+      responses:
+        '200':
+          description: Review.
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskReview'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-rate-limit-tier: default
+  /tasks/{taskId}/diff:
+    parameters:
+    - $ref: '#/components/parameters/TaskId'
+    get:
+      operationId: getTaskDiff
+      tags:
+      - Dev board
+      summary: Branch diff
+      description: The unified diff of the card's agent branch against its base, redacted. 404 when the card has no branch.
+      responses:
+        '200':
+          description: Diff.
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDiff'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-rate-limit-tier: default
+  /tasks/{taskId}/patch:
+    parameters:
+    - $ref: '#/components/parameters/TaskId'
+    get:
+      operationId: getTaskPatch
+      tags:
+      - Dev board
+      summary: Branch as a patch
+      description: The agent branch as `git format-patch` output, to apply with `git am`. 404 when the card has no branch.
+      responses:
+        '200':
+          description: Patch file.
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+          content:
+            text/x-patch:
+              schema:
+                type: string
+                maxLength: 2000000
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-rate-limit-tier: default
   /tasks/{taskId}/plan/approve:
     parameters:
     - $ref: '#/components/parameters/TaskId'
@@ -5778,6 +5889,19 @@ components:
           $ref: '#/components/schemas/TaskSeverity'
         route:
           $ref: '#/components/schemas/TriageRoute'
+        branch:
+          type: string
+          maxLength: 120
+          description: The card's latest published agent branch (`agent/<task>-<run>`).
+        base_sha:
+          type: string
+          maxLength: 64
+          pattern: ^[0-9a-f]{40}([0-9a-f]{24})?$
+        review_round:
+          type: integer
+          minimum: 0
+          maximum: 20
+          description: Review rounds so far. Agent reviews stop after round 2 (`needs_decision`); each human Request changes adds a round.
         allowed_columns:
           type: array
           items:
@@ -6087,6 +6211,121 @@ components:
           type: string
           format: date-time
           maxLength: 40
+    ReviewFinding:
+      type: object
+      required:
+      - severity
+      - path
+      - evidence
+      properties:
+        severity:
+          type: string
+          enum:
+          - BLOCKER
+          - NIT
+          maxLength: 7
+        rubric_id:
+          type: string
+          maxLength: 16
+          pattern: ^[A-Z]{2,5}-\d{2}$
+        test_id:
+          type: string
+          maxLength: 300
+        repro:
+          type: string
+          maxLength: 600
+        path:
+          type: string
+          maxLength: 300
+        line:
+          type: integer
+          minimum: 1
+        evidence:
+          type: string
+          maxLength: 600
+        fix:
+          type: string
+          maxLength: 600
+        downgraded:
+          type: boolean
+          description: A BLOCKER without a citation that code downgraded to NIT.
+    TaskReview:
+      type: object
+      required:
+      - task_id
+      - run_id
+      - round
+      - verdict
+      - summary
+      - findings
+      - created_at
+      properties:
+        task_id:
+          type: string
+          format: uuid
+          maxLength: 36
+        run_id:
+          type: string
+          format: uuid
+          maxLength: 36
+        round:
+          type: integer
+          minimum: 1
+          maximum: 20
+        verdict:
+          type: string
+          enum:
+          - approved
+          - changes_requested
+          - needs_decision
+          maxLength: 17
+        summary:
+          type: string
+          maxLength: 1000
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReviewFinding'
+          maxItems: 10
+        model:
+          type: string
+          maxLength: 100
+        created_at:
+          type: string
+          format: date-time
+          maxLength: 40
+    TaskDiff:
+      type: object
+      required:
+      - branch
+      - base_sha
+      - files_changed
+      - insertions
+      - deletions
+      - diff
+      - truncated
+      properties:
+        branch:
+          type: string
+          maxLength: 120
+        base_sha:
+          type: string
+          maxLength: 64
+        files_changed:
+          type: integer
+          minimum: 0
+        insertions:
+          type: integer
+          minimum: 0
+        deletions:
+          type: integer
+          minimum: 0
+        diff:
+          type: string
+          maxLength: 400000
+          description: Unified diff, redacted. Cut at 400 000 characters (see `truncated`).
+        truncated:
+          type: boolean
     TriageRequest:
       type: object
       required:
@@ -6330,7 +6569,7 @@ components:
         round:
           type: integer
           minimum: 0
-          maximum: 2
+          maximum: 20
         model:
           type: string
           maxLength: 100

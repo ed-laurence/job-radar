@@ -21,13 +21,27 @@ ask llm-proxy what the run spent, and keep the run's logs in `.artifacts/agent-r
   clock and model from config (`triage_*`), nothing published, `/out/triage.json` read strictly
   (`triage_file`) into `SandboxResult.triage`. `DockerTriageAgent` (`docker_triage`) guards the
   card first and turns the result into the `TriageAgent` port's decision.
+- Review runs (the read-only reviewer, `AGENT_MODE=review`) work like triage runs (budget,
+  wall clock and model from config, `review_*`), but their input is the card's published branch
+  head (`CodeHost.bundle_branch`) and the container gets the card's base as `AGENT_BASE_SHA`.
+  `/out/review.json` is read strictly (`review_file`) into `AgentResult.review`.
+- Dev runs: after publishing, the Publisher's checks run (`publish_checks`); any violation
+  deletes the branch and fails the run with the list. A clean branch sets `branch` and
+  `base_sha`. A rework dev run (the context carries a review and the card has a branch) starts
+  from the card's branch head instead of a working-tree snapshot, with the card's base.
+- `CODE_HOST=github` (a `pusher` in the deps, docs/features/github-prs.md): the host snapshots
+  GitHub `main`, and a done dev run whose branch passed the checks gets the publish commit (the
+  sandbox's test re-run counts and PUB-SIZE's changed lines as trailers) and is pushed to
+  `agent/task-<uuid>`. `branch` stays the scratch branch. A failed push fails the run with the
+  git verb and exit code; the scratch branch stays, so the card can be retried.
 - Dev runs are labelled with the sandbox's role, `writer`; sandboxed plan runs `dev-lead`,
-  triage runs `triage`.
+  triage runs `triage`, review runs `reviewer`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 import shutil
@@ -38,11 +52,18 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 
 from app.adapters.agents.handoff import Handoff, HandoffError, read_handoff
 from app.adapters.agents.plan_file import PlanFileError, read_plan
 from app.adapters.agents.process import ProcessRunner
+from app.adapters.agents.publish_checks import (
+    SecretFilter,
+    branch_violations,
+    changed_lines,
+    refusal,
+)
+from app.adapters.agents.review_file import ReviewFileError, read_review
 from app.adapters.agents.sandbox_spec import (
     DOCKER_CLI_ENV,
     HARDENING_FLAGS,
@@ -58,16 +79,20 @@ from app.adapters.agents.tokens import (
 )
 from app.adapters.agents.triage_file import TriageFileError, read_triage
 from app.adapters.agents.usage import ProxyUsage, UsageProbe
+from app.adapters.codehost.github import PublishTrailers, PushedBranch
 from app.adapters.codehost.local_git import CodeHost, DiffStat, GitError, Snapshot, branch_name
-from app.domain.devboard.model import RunKind
+from app.domain.devboard.model import ReviewSeverity, RunKind
+from app.domain.devboard.publisher import DevRunSummary, dev_run_outcome
 from app.domain.errors import DomainError
 from app.domain.ports.devboard import (
     AgentResult,
     AgentRunner,
+    ChangeSet,
     RunContext,
     RunTools,
     TextRedactor,
     TriageDecision,
+    github_branch,
 )
 
 __all__ = [
@@ -76,6 +101,7 @@ __all__ = [
     "DOCKER_CLI_ENV",
     "HARDENING_FLAGS",
     "NO_PROXY",
+    "BranchPusher",
     "DockerAgentRunner",
     "SandboxConfig",
     "SandboxDeps",
@@ -90,12 +116,21 @@ PLANNER_ROLE = "dev-lead"
 PLAN_MODE = "plan"
 TRIAGE_ROLE = "triage"
 TRIAGE_MODE = "triage"
+REVIEW_ROLE = "reviewer"
+REVIEW_MODE = "review"
 # Where a run's logs are kept, relative to the repo (shown on the card when there's no handoff).
 ARTIFACTS_HINT = "see .artifacts/agent-runs/{run_id}/"
 # The llm-proxy token outlives the wall clock a little, so the spend can still be read after a
 # timeout kill. The container is gone by then; the token is task-scoped and budgeted.
 USAGE_GRACE_S = 300
-KEPT_FILES = ("handoff.json", "plan.json", "triage.json", "agent.log", "steps.jsonl")
+KEPT_FILES = (
+    "handoff.json",
+    "plan.json",
+    "triage.json",
+    "review.json",
+    "agent.log",
+    "steps.jsonl",
+)
 RUNNER_LOG = "runner.log"
 MAX_KEPT_BYTES = 256 * 1024
 MAX_RUNNER_LOG_BYTES = 64 * 1024
@@ -104,6 +139,12 @@ REDACTED = "[redacted]"
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 _SPACES = re.compile(r"\s+")
+
+
+class BranchPusher(Protocol):
+    """`GitHubHost.push`: the publish commit on a checked scratch branch, pushed to GitHub."""
+
+    async def push(self, branch: str, trailers: PublishTrailers) -> PushedBranch: ...
 
 
 @dataclass(frozen=True)
@@ -117,13 +158,16 @@ class SandboxDeps:
     usage: UsageProbe | None = None
     # Redacts the handoff reason and kept artifacts; None leaves only the token scrub.
     redactor: TextRedactor | None = None
+    # PUB-SECRET's rules (the redaction filter's fast path); None falls back to `redactor`.
+    secret_filter: SecretFilter | None = None
+    # CODE_HOST=github: pushes checked dev-run branches; None keeps them in the scratch remote.
+    pusher: BranchPusher | None = None
 
 
 @dataclass(frozen=True)
 class SandboxResult(AgentResult):
     """`AgentResult` plus what the sandbox produced. The port has no fields for these yet."""
 
-    branch: str | None = None
     diff_stat: DiffStat | None = None
     handoff: Handoff | None = None
     # llm-proxy's answer; None when it was unreachable (the spend is unknown, not zero).
@@ -153,6 +197,14 @@ class _Launch:
     timeout_s: int
     llm_token: str
     secrets: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _Input:
+    """The run's input bundle; `from_branch` when it is a published branch's head."""
+
+    snapshot: Snapshot
+    from_branch: bool = False
 
 
 @dataclass
@@ -211,7 +263,11 @@ class DockerAgentRunner:
     @property
     def labels(self) -> Mapping[RunKind, str]:
         """The agent label of each run kind this runner executes itself."""
-        labels = {RunKind.DEV: AGENT_ROLE, RunKind.TRIAGE: TRIAGE_ROLE}
+        labels = {
+            RunKind.DEV: AGENT_ROLE,
+            RunKind.TRIAGE: TRIAGE_ROLE,
+            RunKind.REVIEW: REVIEW_ROLE,
+        }
         if self._deps.planner is None:
             labels[RunKind.PLAN] = PLANNER_ROLE
         return labels
@@ -223,6 +279,14 @@ class DockerAgentRunner:
                 timeout_s=self._cap(self._config.triage_timeout_s),
                 mode=TRIAGE_MODE,
                 model=self._config.triage_model,
+            )
+            return await self._in_workdir(context, tools, budget)
+        if context.run.kind is RunKind.REVIEW:
+            budget = _Budget(
+                usd=self._config.review_budget_usd,
+                timeout_s=self._cap(self._config.review_timeout_s),
+                mode=REVIEW_MODE,
+                model=self._config.review_model,
             )
             return await self._in_workdir(context, tools, budget)
         if context.run.kind is RunKind.PLAN:
@@ -259,12 +323,13 @@ class DockerAgentRunner:
     async def _run(
         self, context: RunContext, tools: RunTools, budget: _Budget, work: _Workdir
     ) -> AgentResult:
+        given = await self._input(context, work, budget)
+        if isinstance(given, str):
+            return SandboxResult(is_success=False, outcome=given)
+        snapshot = given.snapshot
         try:
-            snapshot = await self._deps.host.snapshot(work.inbox / "input.bundle")
-        except GitError:
-            return SandboxResult(is_success=False, outcome="Could not snapshot the repository.")
-        try:
-            launch = self._launch(context, budget, work)
+            base = snapshot.base_sha if given.from_branch else None
+            launch = self._launch(context, budget, work, base)
         except (CoordinatorTokensUnavailable, ValueError) as error:
             # Both carry fixed, secret-free messages (bad key length, ttl, mount path).
             return SandboxResult(is_success=False, outcome=str(error))
@@ -276,18 +341,45 @@ class DockerAgentRunner:
             elif budget.mode == TRIAGE_MODE:
                 result = await self._triage_result(context, work, (code, stopped), launch)
                 result = _with_model(result, budget.model)
+            elif budget.mode == REVIEW_MODE:
+                result = await self._review_result(context, work, (code, stopped), launch)
+                result = _with_model(result, budget.model)
             else:
                 result = await self._result(context, work, snapshot, (code, stopped), launch)
         finally:
             await self._keep_artifacts(context.run.id, work, launch.secrets)
         return _with_spend(result, spend)
 
-    def _launch(self, context: RunContext, budget: _Budget, work: _Workdir) -> _Launch:
+    async def _input(self, context: RunContext, work: _Workdir, budget: _Budget) -> _Input | str:
+        """A working-tree snapshot, or (review and rework runs) the card's branch head with the
+        card's base. A string is why there is no input."""
+        dest = work.inbox / "input.bundle"
+        task = context.task
+        has_branch = task.branch is not None and task.base_sha is not None
+        is_rework = budget.mode is None and context.review is not None and has_branch
+        if budget.mode == REVIEW_MODE or is_rework:
+            if task.branch is None or task.base_sha is None:
+                return "The card has no published branch to review."
+            try:
+                bundled = await self._deps.host.bundle_branch(task.branch, task.base_sha, dest)
+            except (GitError, ValueError):
+                return "Could not bundle the agent branch."
+            return _Input(bundled, from_branch=True)
+        try:
+            return _Input(await self._deps.host.snapshot(dest))
+        except GitError:
+            return "Could not snapshot the repository."
+
+    def _launch(
+        self, context: RunContext, budget: _Budget, work: _Workdir, base_sha: str | None
+    ) -> _Launch:
         task_id, run_id = context.task.id, context.run.id
         timeout_s = budget.timeout_s
+        # The token's key is llm-proxy's spend ledger key: one per run, so earlier runs of the
+        # same card don't use up this run's budget (fits the proxy's 64-character key).
         llm_token = mint_llm_proxy_budget_token(
             self.__secret,
-            str(task_id),
+            f"{task_id.hex[:8]}.{run_id}",
             timeout_s + USAGE_GRACE_S,
             usd_to_micro(budget.usd),
             now=self._wall(),
@@ -313,6 +405,9 @@ class DockerAgentRunner:
             public["AGENT_MODE"] = budget.mode
         if budget.model is not None:
             public["AGENT_MODEL"] = budget.model
+        if base_sha is not None:
+            # The workspace starts at a published branch head; the card's base is this commit.
+            public["AGENT_BASE_SHA"] = base_sha
         secrets = {"ANTHROPIC_AUTH_TOKEN": llm_token, "COORDINATOR_TOKEN": coordinator_token}
         argv = [cfg.docker, "run", "--rm", "--name", name, "--network", cfg.network]
         for flag in HARDENING_FLAGS:
@@ -392,7 +487,7 @@ class DockerAgentRunner:
         if code != 0:
             outcome = f"The sandbox failed (exit {code})."
             return SandboxResult(is_success=False, outcome=outcome, handoff=handoff)
-        published = await self._publish(context, work, snapshot, handoff)
+        published = await self._publish(context, work, snapshot, handoff, push=True)
         if isinstance(published, str):
             return SandboxResult(is_success=False, outcome=published, handoff=handoff)
         return published
@@ -447,6 +542,33 @@ class DockerAgentRunner:
         )
         return SandboxResult(is_success=True, outcome=outcome, triage=decision)
 
+    async def _review_result(
+        self, context: RunContext, work: _Workdir, exit_status: tuple[int, Stop], launch: _Launch
+    ) -> SandboxResult:
+        """The reviewer's findings; nothing is published. Like a triage run, a missing or invalid
+        file fails the run with the parser's fixed reason (or the agent's stated one)."""
+        code, stopped = exit_status
+        if stopped is not None:
+            return _stopped(stopped, launch.timeout_s)
+        hint = ARTIFACTS_HINT.format(run_id=context.run.id)
+        try:
+            draft = await asyncio.to_thread(
+                read_review, work.outbox / "review.json", str(context.task.id)
+            )
+        except ReviewFileError as error:
+            return await self._no_output(context, work, launch, (code, str(error)))
+        if code != 0:
+            outcome = f"The sandbox failed (exit {code}); its review was not used ({hint})."
+            return SandboxResult(is_success=False, outcome=outcome)
+        blockers = sum(1 for f in draft.findings if f.severity is ReviewSeverity.BLOCKER)
+        nits = len(draft.findings) - blockers
+        # Built from counts only: the review's free text is untrusted.
+        outcome = (
+            f"Review ready: {_plural(len(draft.findings), 'finding')}"
+            f" ({_plural(blockers, 'blocker')}, {_plural(nits, 'nit')})."
+        )
+        return SandboxResult(is_success=True, outcome=outcome, review=draft)
+
     async def _no_output(
         self, context: RunContext, work: _Workdir, launch: _Launch, failure: tuple[int, str]
     ) -> SandboxResult:
@@ -480,9 +602,16 @@ class DockerAgentRunner:
         return replace(published, is_success=False, outcome=f"{reason} {published.outcome}")
 
     async def _publish(
-        self, context: RunContext, work: _Workdir, snapshot: Snapshot, handoff: Handoff
+        self,
+        context: RunContext,
+        work: _Workdir,
+        snapshot: Snapshot,
+        handoff: Handoff,
+        *,
+        push: bool = False,
     ) -> SandboxResult | str:
-        """The published branch as a successful result, or why it couldn't be published."""
+        """The published branch as a successful result, or why it couldn't be published. With
+        `push` (a done handoff) and a pusher, the checked branch is also pushed to GitHub."""
         task_id, run_id = context.task.id, context.run.id
         bundle = work.outbox / "result.bundle"
         if not await asyncio.to_thread(_is_regular_file, bundle):
@@ -494,16 +623,79 @@ class DockerAgentRunner:
             )
         except (GitError, ValueError):
             return "Could not publish the agent branch."
+        checked = await self._check_branch(context, branch, snapshot.base_sha)
+        if isinstance(checked, str):
+            return checked
         stat, tests = published.stat, handoff.tests
         # Built from counts only: the handoff's free text is untrusted and stays in `handoff`.
-        outcome = (
-            f"Branch {branch}: {stat.files_changed} files changed, +{stat.insertions}"
-            f" -{stat.deletions}; handoff {handoff.status}; tests {tests.passed} passed,"
-            f" {tests.failed} failed."
+        # The reviewer's get_task reads these counts back (`parse_dev_run_outcome`).
+        summary = DevRunSummary(
+            branch=branch,
+            files_changed=stat.files_changed,
+            insertions=stat.insertions,
+            deletions=stat.deletions,
+            passed=tests.passed,
+            failed=tests.failed,
+            first_failing=tests.first_failing,
         )
-        return SandboxResult(
-            is_success=True, outcome=outcome, branch=branch, diff_stat=stat, handoff=handoff
+        outcome = dev_run_outcome(summary, handoff.status)
+        result = SandboxResult(
+            is_success=True,
+            outcome=outcome,
+            branch=branch,
+            base_sha=snapshot.base_sha,
+            diff_stat=stat,
+            handoff=handoff,
         )
+        if not push or self._deps.pusher is None:
+            return result
+        trailers = PublishTrailers(
+            task_id=task_id,
+            passed=tests.passed,
+            failed=tests.failed,
+            diff_lines=changed_lines(checked),
+        )
+        return await self._push(self._deps.pusher, result, (branch, trailers))
+
+    async def _push(
+        self, pusher: BranchPusher, result: SandboxResult, what: tuple[str, PublishTrailers]
+    ) -> SandboxResult:
+        """Push the checked branch. Failure fails the run (the scratch branch stays); the
+        message is git's verb and exit code only. The count parts stay for the reviewer."""
+        branch, trailers = what
+        try:
+            pushed = await pusher.push(branch, trailers)
+        except (GitError, ValueError) as error:
+            target = github_branch(trailers.task_id)
+            outcome = f"Could not push {target} to GitHub ({error}). {result.outcome}"
+            return replace(result, is_success=False, outcome=outcome)
+        note = f" Pushed {pushed.branch}; the PR opens from agent-pr.yml."
+        return replace(result, outcome=f"{result.outcome}{note}")
+
+    async def _check_branch(
+        self, context: RunContext, branch: str, base_sha: str
+    ) -> ChangeSet | str:
+        """The Publisher's checks: the checked change set, or the refusal. On any violation (or
+        if the branch can't be read) the branch is deleted and the refusal is the run's outcome
+        (one line, redacted: paths are the agent's)."""
+        host = self._deps.host
+        changes: ChangeSet | None = None
+        try:
+            changes = await host.changes(base_sha, branch)
+            found = await branch_violations(
+                context, changes, self._deps.secret_filter, self._deps.redactor
+            )
+        except (GitError, ValueError):
+            found = None
+        if found == () and changes is not None:
+            return changes
+        # If deleting fails the run still fails; the branch stays only in the scratch remote.
+        with contextlib.suppress(GitError, ValueError):
+            await host.delete_branch(branch)
+        if found is None:
+            return "Could not check the agent branch, so it was not kept."
+        text = _one_line(refusal(found))
+        return await self._redact(text) or "The Publisher refused the branch (details withheld)."
 
     async def _stated_reason(
         self, context: RunContext, work: _Workdir, launch: _Launch
@@ -562,6 +754,10 @@ def _stopped(stopped: Literal["timeout", "cancelled"], timeout_s: int) -> Sandbo
     return SandboxResult(
         is_success=False, outcome=f"Timed out after {timeout_s} s; sandbox killed."
     )
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" + ("" if count == 1 else "s")
 
 
 def _with_model(result: SandboxResult, model: str | None) -> SandboxResult:

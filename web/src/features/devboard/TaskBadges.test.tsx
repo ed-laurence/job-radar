@@ -127,6 +127,33 @@ describe("TaskBadges colours", () => {
     expect(badge(/^\+2/)).toHaveTextContent("+2 more labels");
     expect(badge(/^\+2/)).toHaveAttribute("title", "d, e");
   });
+
+  it("shows the review round once the card has been reviewed", () => {
+    const { rerender } = render(
+      <TaskBadges task={task({ id: ID, column: "agent_review", review_round: 2 })} />,
+    );
+    expect(badge("Review round 2")).toHaveClass("badgeAccent");
+    rerender(
+      <TaskBadges task={task({ id: ID, column: "agent_dev", size: "S", review_round: 0 })} />,
+    );
+    expect(badges().some((b) => b?.startsWith("Review round"))).toBe(false);
+  });
+
+  it("shows needs-decision as a danger pill instead of a plain label", () => {
+    render(
+      <TaskBadges
+        task={task({
+          id: ID,
+          column: "human_review",
+          review_round: 2,
+          labels: ["needs-decision", "ux"],
+        })}
+      />,
+    );
+    expect(badge("Needs decision")).toHaveClass("badgeDanger");
+    expect(badges()).not.toContain("Label needs-decision");
+    expect(badge("Label ux")).toHaveClass("badgeNeutral");
+  });
 });
 
 function toneClass(tone: string): string {
